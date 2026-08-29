@@ -11,3 +11,6 @@ wheels/
 
 # Disposable project-local work
 /.tmp.*
+
+# Demo-owned runtime state
+/runtime/

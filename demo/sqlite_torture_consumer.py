@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import Any, cast
 
 from sqlglot_experiments import (
-    BindingCountError,
+    ApiFailureEnvelope,
     InputBindings,
-    StatementPreparationError,
+    PreparedStatement,
     prepare_statement,
 )
 
@@ -206,20 +206,17 @@ def _matches_expected_error(error: Exception, expected: Mapping[str, Any]) -> bo
     )
 
 
-def _preparation_failure_kind(error: Exception) -> str:
-    if isinstance(error, BindingCountError):
+def _preparation_failure_kind(failure: ApiFailureEnvelope) -> str:
+    message = failure["msg"]
+    if message.startswith("failure: bindings:"):
         return "binding_count"
-    if isinstance(error, StatementPreparationError) and str(error).startswith(
-        "expected exactly one SQL statement"
-    ):
+    if message.startswith("failure: expected exactly one SQL statement"):
         return "statement_count"
-    if isinstance(error, StatementPreparationError):
-        return "statement_preparation"
-    return type(error).__name__
+    return "statement_preparation"
 
 
 def _is_expected_brick_rejection(
-    error: Exception,
+    failure: ApiFailureEnvelope,
     expected: Mapping[str, Any],
 ) -> bool:
     client_side_sqlite_error = (
@@ -227,7 +224,7 @@ def _is_expected_brick_rejection(
         and not expected.get("sqlite_errorname")
         and expected.get("sqlite_errorcode_fallback") is None
     )
-    return client_side_sqlite_error and _preparation_failure_kind(error) in {
+    return client_side_sqlite_error and _preparation_failure_kind(failure) in {
         "binding_count",
         "statement_count",
     }
@@ -262,28 +259,28 @@ def _run_case(
     try:
         _execute_setup(connection, case)
         params = _decode(case.get("params", []))
-        try:
-            # Static cast only: decoded source bindings reach the API unchanged.
-            package = prepare_statement(
-                str(case["sql"]),
-                bindings=cast(InputBindings, params),
-                source_dialect="sqlite",
-                target_dialect="sqlite",
-            )
-        except Exception as error:  # noqa: BLE001 - preparation failures are evidence
+        # Static cast only: decoded source bindings reach the API unchanged.
+        package = prepare_statement(
+            str(case["sql"]),
+            bindings=cast(InputBindings, params),
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+        result["package"] = package
+        if not package["success"]:
+            failure = cast(ApiFailureEnvelope, package)
             result["status"] = (
                 "expected_brick_rejection"
                 if expected_error is not None
-                and _is_expected_brick_rejection(error, expected_error)
+                and _is_expected_brick_rejection(failure, expected_error)
                 else "prepare_failure"
             )
-            result["failure_kind"] = _preparation_failure_kind(error)
-            result["error"] = _error_details(error)
+            result["failure_kind"] = _preparation_failure_kind(failure)
             return result
 
-        result["package"] = package
+        prepared = cast(PreparedStatement, package)
         try:
-            cursor = connection.execute(package["sql"], package["bindings"])
+            cursor = connection.execute(prepared["sql"], prepared["bindings"])
             actual_rows = [tuple(row) for row in cursor.fetchall()]
         except Exception as error:  # noqa: BLE001 - target failures are evidence
             if expected_error is not None and _matches_expected_error(
@@ -432,7 +429,11 @@ def run_torture_suite(
     source_status_counts: defaultdict[str, Counter[str]] = defaultdict(Counter)
     for result in results:
         source_status_counts[result["source_set"]][result["status"]] += 1
-    packages = [result["package"] for result in results if "package" in result]
+    packages = [
+        result["package"]
+        for result in results
+        if result.get("package", {}).get("success")
+    ]
     failures = [result for result in results if result["status"] not in PASS_STATUSES]
     summary = {
         "scope": (

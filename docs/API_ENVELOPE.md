@@ -37,5 +37,5 @@ messages.
 
 A warning identifies a reportable preparation intervention, currently lifting
 hardcoded values into bindings. Normal target-dialect rendering and formatting
-are not warnings. Internal analysis such as fingerprinting works on a copied
-AST and does not alter the public result or its warning state.
+are not warnings. Fingerprinting works on a copied AST and adds its digest to
+the success payload without altering generated SQL or warning state.

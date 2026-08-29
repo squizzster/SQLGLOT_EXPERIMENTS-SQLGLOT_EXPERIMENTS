@@ -14,14 +14,15 @@ checks, and explicit limitations while breaking changes remain expected.
 `prepare_statement` is the library's first public API command. It accepts
 exactly one `SELECT`, `INSERT`, `UPDATE`, or `DELETE`, optional source-native
 sequence or mapping bindings, and explicit source and target dialects. Every
-return carries the standard `success`, `warnings`, and `msg` envelope. A
-successful hardcoded-value replacement returns:
+recognised outcome carries the fixed `success`, `warnings`, and `msg` envelope.
+A successful hardcoded-value replacement returns:
 
 ```python
 {
     "success": True,
     "warnings": True,
     "msg": "warnings: replaced 1 hardcoded value with placeholder",
+    "sql_fingerprint": "<64-character SHA-256>",
     "dialect": ["sqlite", "sqlite"],
     "statement_type": "SELECT",
     "sql": "SELECT * FROM orders WHERE category = ?",
@@ -35,7 +36,9 @@ successful hardcoded-value replacement returns:
 
 Failures contain only the standard envelope; they never contain fake executable
 SQL or bindings. Messages are owned by this library, single-line, and limited to
-240 characters.
+240 characters. Missing, invalid, or malformed public arguments return specific
+failure messages instead of Python argument-binding exceptions. Unexpected
+internal defects remain exceptions.
 
 SQLite execution is verified for all four statement types, the retained complex
 fixture, and 590 torture cases with no genuine failures. Hardcoded and
@@ -43,8 +46,9 @@ already-parameterized inputs converge to the same package shape. The demo
 consumer deliberately owns database execution; the library does not connect to
 a database.
 
-Internal statement fingerprinting now produces a value-independent SHA-256 for
-`SELECT`, `INSERT`, `UPDATE`, and `DELETE` without changing the public API. Its
+Internal statement fingerprinting produces the public success-payload field
+`sql_fingerprint`: a value-independent SHA-256 for `SELECT`, `INSERT`, `UPDATE`,
+and `DELETE`. The fingerprint function itself remains private, and the
 source-to-target dialect route remains part of the fingerprint identity.
 
 ## Design notes
@@ -52,7 +56,7 @@ source-to-target dialect route remains part of the fingerprint identity.
 - [Public API envelope](docs/API_ENVELOPE.md)
 - [AST source and target](docs/AST_SOURCE_TARGET.md)
 - [Statement API contract](docs/STATEMENT_API.md)
-- [Internal statement fingerprinting](docs/STATEMENT_FINGERPRINTING.md)
+- [Statement fingerprinting](docs/STATEMENT_FINGERPRINTING.md)
 
 ## Run
 

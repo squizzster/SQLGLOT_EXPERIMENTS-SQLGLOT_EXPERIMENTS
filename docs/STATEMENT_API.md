@@ -28,6 +28,7 @@ returns one compact, execution-complete package:
     "statement_type": "SELECT",
     "sql": "SELECT * FROM orders WHERE category = ?",
     "bindings": ["sales"],
+    "where_fields": [],
     "analysis": {
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
@@ -75,6 +76,31 @@ example, SQLite `LIMIT ?, ?` becomes `LIMIT ? OFFSET ?`, and the corresponding
 values are reordered with it.
 
 `dialect` is always the ordered `[source, target]` pair.
+
+`where_fields` is always an array. It contains distinct qualified fields found
+beneath `WHERE` nodes when SQLGlot can resolve the qualifier directly to a
+physical table in the source AST:
+
+```python
+prepare_statement(
+    "SELECT * FROM main.people AS p WHERE p.id = 1 AND p.status = 'active'",
+    source_dialect="sqlite",
+    target_dialect="sqlite",
+)["where_fields"]
+
+# [
+#     {"database": "main", "table": "people", "field": "id"},
+#     {"database": "main", "table": "people", "field": "status"},
+# ]
+```
+
+The table is always known for every returned item. The database is `None` when
+the SQL does not name it; no database is guessed. Unqualified fields, ambiguous
+references, and fields qualified by a CTE or derived-table alias are omitted
+because the source AST alone does not prove a physical table for them. Thus an
+empty array means "no reliably resolved qualified WHERE fields", not
+necessarily "no WHERE clause". Repeated references to the same physical
+database/table/field are returned once, in first-occurrence order.
 
 `hardcoded_value_count` counts replaced occurrences and
 `hardcoded_field_count` counts their distinct AST-associated fields. These

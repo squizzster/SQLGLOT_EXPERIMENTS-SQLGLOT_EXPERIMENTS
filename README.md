@@ -27,6 +27,7 @@ A successful hardcoded-value replacement returns:
     "statement_type": "SELECT",
     "sql": "SELECT * FROM orders WHERE category = ?",
     "bindings": ["sales"],
+    "where_fields": [],
     "analysis": {
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
@@ -50,6 +51,12 @@ Internal statement fingerprinting produces the public success-payload field
 `sql_fingerprint`: a value-independent SHA-256 for `SELECT`, `INSERT`, `UPDATE`,
 and `DELETE`. The fingerprint function itself remains private, and the
 source-to-target dialect route remains part of the fingerprint identity.
+
+Successful packages also include `where_fields`, the deduplicated qualified
+fields beneath `WHERE` nodes that the source AST resolves directly to physical
+tables. Every returned item has a table; its database is `None` when SQL does
+not name one. Unqualified, ambiguous, CTE, and derived-table references are
+omitted rather than guessed.
 
 ## Design notes
 

@@ -147,6 +147,26 @@ class SqliteTortureConsumerTests(unittest.TestCase):
         self.assertEqual(result["status"], "equivalent")
         self.assertEqual(result["package"]["bindings"], [401, "named"])
 
+    def test_qualified_where_fields_remain_stable_across_the_corpus(self) -> None:
+        packages = [
+            result["package"]
+            for result in self.report["results"]
+            if result.get("package", {}).get("success")
+        ]
+        fields = [field for package in packages for field in package["where_fields"]]
+
+        self.assertEqual(len(packages), 587)
+        self.assertEqual(len(fields), 222)
+        self.assertEqual(sum(bool(package["where_fields"]) for package in packages), 83)
+        self.assertTrue(
+            all(
+                set(field) == {"database", "table", "field"}
+                and field["table"]
+                and field["field"]
+                for field in fields
+            )
+        )
+
     def test_complete_torture_run_has_no_genuine_failures(self) -> None:
         self.assertEqual(self.report["summary"]["genuine_failure_count"], 0)
         self.assertEqual(self.report["failures"], [])

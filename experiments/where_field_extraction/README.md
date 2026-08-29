@@ -79,5 +79,13 @@ single-source ownership remains visibly inferred, and derived outputs remain
 unresolved. Database names can be extracted only when SQL names them.
 
 This is strong corpus evidence, not a proof for every SQL grammar. A production
-contract should preserve `observed`, `inferred`, and `unresolved` rather than
-claiming that every field has a physical database/table identity.
+contract must not claim that every field has a physical database/table
+identity.
+
+## Production decision
+
+Only the experiment's `observed` subset was promoted to the public
+`prepare_statement` success payload as `where_fields`. Inferred and unresolved
+occurrences are omitted, so every returned item has a proven physical table.
+An absent database remains `None`. This intentionally makes an empty array mean
+"no reliably resolved qualified fields", not "no WHERE clause".

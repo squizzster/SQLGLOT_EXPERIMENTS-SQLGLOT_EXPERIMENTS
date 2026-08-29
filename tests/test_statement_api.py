@@ -47,6 +47,11 @@ def assert_failure(
     testcase.assertEqual(set(result), {"success", "warnings", "msg"})
 
 
+def call_public_api(*args: object, **kwargs: object) -> PreparationResult:
+    """Exercise the runtime boundary as an untyped external caller."""
+    return prepare_statement_result(*args, **kwargs)  # type: ignore[call-overload]
+
+
 class StatementApiTests(unittest.TestCase):
     def test_select_returns_compact_execution_package(self) -> None:
         package = prepare_statement(
@@ -610,25 +615,16 @@ class StatementApiTests(unittest.TestCase):
             },
         )
 
-    def test_unexpected_internal_error_returns_our_controlled_failure(self) -> None:
+    def test_unexpected_internal_error_escapes_as_a_defect(self) -> None:
         with patch(
             "sqlglot_experiments.statement_api._prepare_statement",
             side_effect=RuntimeError("external details must not escape"),
-        ):
-            result = prepare_statement_result(
+        ), self.assertRaisesRegex(RuntimeError, "external details must not escape"):
+            prepare_statement_result(
                 "SELECT 1",
                 source_dialect="sqlite",
                 target_dialect="sqlite",
             )
-
-        self.assertEqual(
-            result,
-            {
-                "success": False,
-                "warnings": False,
-                "msg": "failure: internal preparation error",
-            },
-        )
 
     def test_envelope_message_has_a_hard_compact_limit(self) -> None:
         parameter_name = "x" * 2_000
@@ -644,9 +640,114 @@ class StatementApiTests(unittest.TestCase):
         self.assertLessEqual(len(result["msg"]), 240)
         self.assertTrue(result["msg"].endswith("..."))
 
-    def test_source_and_target_are_required(self) -> None:
-        with self.assertRaises(TypeError):
-            prepare_statement_result("SELECT 1")  # type: ignore[call-arg]
+    def test_known_invalid_calls_return_specific_fixed_envelopes(self) -> None:
+        cases: tuple[
+            tuple[str, tuple[object, ...], dict[str, object], str], ...
+        ] = (
+            ("missing sql", (), {}, "failure: sql is required"),
+            (
+                "non-string sql",
+                (42,),
+                {"source_dialect": "sqlite", "target_dialect": "sqlite"},
+                "failure: sql must be a string",
+            ),
+            (
+                "blank sql",
+                ("  ",),
+                {"source_dialect": "sqlite", "target_dialect": "sqlite"},
+                "failure: sql is required",
+            ),
+            (
+                "missing source dialect",
+                ("SELECT 1",),
+                {"target_dialect": "sqlite"},
+                "failure: source dialect is required",
+            ),
+            (
+                "non-string source dialect",
+                ("SELECT 1",),
+                {"source_dialect": 42, "target_dialect": "sqlite"},
+                "failure: source dialect must be a string",
+            ),
+            (
+                "blank source dialect",
+                ("SELECT 1",),
+                {"source_dialect": "  ", "target_dialect": "sqlite"},
+                "failure: source dialect is required",
+            ),
+            (
+                "unsupported source dialect",
+                ("SELECT 1",),
+                {"source_dialect": "not_a_dialect", "target_dialect": "sqlite"},
+                "failure: unsupported source dialect: not_a_dialect",
+            ),
+            (
+                "missing target dialect",
+                ("SELECT 1",),
+                {"source_dialect": "sqlite"},
+                "failure: target dialect is required",
+            ),
+            (
+                "non-string target dialect",
+                ("SELECT 1",),
+                {"source_dialect": "sqlite", "target_dialect": 42},
+                "failure: target dialect must be a string",
+            ),
+            (
+                "blank target dialect",
+                ("SELECT 1",),
+                {"source_dialect": "sqlite", "target_dialect": "  "},
+                "failure: target dialect is required",
+            ),
+            (
+                "unsupported target dialect",
+                ("SELECT 1",),
+                {"source_dialect": "sqlite", "target_dialect": "not_a_dialect"},
+                "failure: unsupported target dialect: not_a_dialect",
+            ),
+            (
+                "extra positional argument",
+                ("SELECT 1", "sqlite"),
+                {"target_dialect": "sqlite"},
+                "failure: only sql may be passed positionally",
+            ),
+            (
+                "duplicate sql",
+                ("SELECT 1",),
+                {
+                    "sql": "SELECT 2",
+                    "source_dialect": "sqlite",
+                    "target_dialect": "sqlite",
+                },
+                "failure: sql was provided more than once",
+            ),
+            (
+                "unexpected argument",
+                ("SELECT 1",),
+                {
+                    "source_dialect": "sqlite",
+                    "target_dialect": "sqlite",
+                    "timeout": 1,
+                },
+                "failure: unexpected argument: timeout",
+            ),
+        )
+
+        for label, args, kwargs, message in cases:
+            with self.subTest(label=label):
+                self.assertEqual(
+                    call_public_api(*args, **kwargs),
+                    {"success": False, "warnings": False, "msg": message},
+                )
+
+    def test_sql_may_be_supplied_by_keyword(self) -> None:
+        result = prepare_statement_result(
+            sql="SELECT 1",
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(result["success"], True)
 
     def test_postgres_target_uses_sqlglot_postgres_placeholder(self) -> None:
         package = prepare_statement(

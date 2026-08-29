@@ -1,7 +1,7 @@
 [project]
 name = "sqlglot-experiments"
 version = "0.1.0"
-description = "Evidence-led experiments with SQLGlot"
+description = "SQLGlot-backed SQL statement analysis prototype"
 readme = "README.md"
 authors = [
     { name = "Mark", email = "squizzster@gmail.com" }

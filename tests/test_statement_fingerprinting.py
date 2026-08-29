@@ -227,6 +227,7 @@ class StatementFingerprintingTests(unittest.TestCase):
             )
             if result["success"]:
                 prepared = cast(PreparedStatement, result)
+                self.assertEqual(original, prepared["sql_fingerprint"])
                 self.assertEqual(original, self.fingerprint(prepared["sql"]))
                 prepared_match_count += 1
 

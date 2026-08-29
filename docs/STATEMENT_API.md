@@ -2,25 +2,28 @@
 
 ```python
 prepare_statement(
-    sql: str,
+    sql: str | None = None,
     *,
     bindings: Sequence[object] | Mapping[str, object] | None = None,
-    source_dialect: str,
-    target_dialect: str,
+    source_dialect: str | None = None,
+    target_dialect: str | None = None,
 ) -> PreparationResult
 ```
 
-Both dialects are required. `bindings` is omitted when the input has no
-placeholders. Otherwise it resolves values through the declared source
-dialect's logical parameter slots. Every return follows the
-[public API envelope](API_ENVELOPE.md). A successful replacement returns one
-compact, execution-complete package:
+SQL and both dialects are semantically required. Their `None` defaults allow
+omission to enter the public boundary and return a controlled failure envelope
+instead of raising Python's argument-binding `TypeError`. `bindings` is omitted
+when the input has no placeholders. Otherwise it resolves values through the
+declared source dialect's logical parameter slots. Every recognised outcome
+follows the [public API envelope](API_ENVELOPE.md). A successful replacement
+returns one compact, execution-complete package:
 
 ```python
 {
     "success": True,
     "warnings": True,
     "msg": "warnings: replaced 1 hardcoded value with placeholder",
+    "sql_fingerprint": "<64-character SHA-256>",
     "dialect": ["sqlite", "sqlite"],
     "statement_type": "SELECT",
     "sql": "SELECT * FROM orders WHERE category = ?",
@@ -42,6 +45,29 @@ SQL requiring no replacement returns `success: True`, `warnings: False`, and
     "msg": "failure: <compact library-owned reason>",
 }
 ```
+
+The fixed envelope does not gain error-specific fields. Known public-call
+failures have library-owned messages, including:
+
+| Situation | `msg` |
+|---|---|
+| Missing or blank SQL | `failure: sql is required` |
+| Non-string SQL | `failure: sql must be a string` |
+| Missing or blank source dialect | `failure: source dialect is required` |
+| Non-string source dialect | `failure: source dialect must be a string` |
+| Unsupported source dialect | `failure: unsupported source dialect: <name>` |
+| Missing or blank target dialect | `failure: target dialect is required` |
+| Non-string target dialect | `failure: target dialect must be a string` |
+| Unsupported target dialect | `failure: unsupported target dialect: <name>` |
+| Extra positional argument | `failure: only sql may be passed positionally` |
+| SQL passed twice | `failure: sql was provided more than once` |
+| Unknown keyword | `failure: unexpected argument: <name>` |
+| Invalid or mismatched bindings | `failure: bindings: <compact reason>` |
+
+Empty or multiple statements, unsupported statement types, malformed SQL,
+unsupported placeholder forms, and target-rendering failures also return this
+same fixed failure envelope. An unexpected internal defect raises an exception;
+it is not misreported as a recognised caller failure.
 
 Returned bindings are native Python values in generated-target-placeholder
 order. This may differ from source order when SQLGlot rewrites a construct; for

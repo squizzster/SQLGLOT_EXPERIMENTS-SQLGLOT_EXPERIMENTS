@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
-from typing import Literal, TypedDict, cast
+from typing import Literal, TypedDict, cast, overload
 
 from sqlglot import Dialect, exp, parse
 from sqlglot.errors import ParseError, SqlglotError, TokenError, UnsupportedError
@@ -20,6 +21,7 @@ from sqlglot_experiments.source_parameters import (
     ParameterPlanningError,
     plan_source_parameters,
 )
+from sqlglot_experiments.statement_fingerprinting import fingerprint_statement
 
 StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE"]
 
@@ -30,6 +32,7 @@ class Analysis(TypedDict):
 
 
 class PreparedStatement(ApiSuccessEnvelope):
+    sql_fingerprint: str
     dialect: list[str]
     statement_type: StatementType
     sql: str
@@ -70,15 +73,33 @@ _DIRECT_PREDICATES = (
 )
 
 
+@overload
 def prepare_statement(
     sql: str,
     *,
     bindings: InputBindings | None = None,
     source_dialect: str,
     target_dialect: str,
-) -> PreparationResult:
-    """Return the library-owned envelope and a payload only when successful."""
+) -> PreparationResult: ...
+
+
+@overload
+def prepare_statement(
+    sql: str | None = None,
+    *,
+    bindings: InputBindings | None = None,
+    source_dialect: str | None = None,
+    target_dialect: str | None = None,
+) -> PreparationResult: ...
+
+
+def prepare_statement(*args: object, **kwargs: object) -> PreparationResult:
+    """Return the fixed public envelope for every recognised call outcome."""
     try:
+        sql, bindings, source_dialect, target_dialect = _validate_public_call(
+            args,
+            kwargs,
+        )
         return _prepare_statement(
             sql,
             bindings=bindings,
@@ -87,8 +108,62 @@ def prepare_statement(
         )
     except (StatementPreparationError, SqlglotError) as error:
         return failure_envelope(_failure_reason(error))
-    except Exception:  # noqa: BLE001 - the public envelope owns failure disclosure
-        return failure_envelope("internal preparation error")
+
+
+def _validate_public_call(
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+) -> tuple[str, InputBindings | None, str, str]:
+    if len(args) > 1:
+        raise StatementPreparationError("only sql may be passed positionally")
+
+    supported_arguments = {"sql", "bindings", "source_dialect", "target_dialect"}
+    unexpected_arguments = sorted(set(kwargs) - supported_arguments)
+    if unexpected_arguments:
+        label = "argument" if len(unexpected_arguments) == 1 else "arguments"
+        names = ", ".join(unexpected_arguments)
+        raise StatementPreparationError(f"unexpected {label}: {names}")
+
+    if args and "sql" in kwargs:
+        raise StatementPreparationError("sql was provided more than once")
+
+    sql = args[0] if args else kwargs.get("sql")
+    bindings = kwargs.get("bindings")
+    source_dialect = kwargs.get("source_dialect")
+    target_dialect = kwargs.get("target_dialect")
+
+    if sql is None:
+        raise StatementPreparationError("sql is required")
+    if not isinstance(sql, str):
+        raise StatementPreparationError("sql must be a string")
+    if not sql.strip():
+        raise StatementPreparationError("sql is required")
+
+    source_dialect = _require_public_dialect(source_dialect, role="source")
+    target_dialect = _require_public_dialect(target_dialect, role="target")
+
+    if bindings is not None and (
+        isinstance(bindings, (str, bytes, bytearray, memoryview))
+        or not isinstance(bindings, (Mapping, Sequence))
+    ):
+        raise BindingCountError("bindings must be a sequence or mapping of values")
+
+    return (
+        sql,
+        cast(InputBindings | None, bindings),
+        source_dialect,
+        target_dialect,
+    )
+
+
+def _require_public_dialect(dialect: object, *, role: str) -> str:
+    if dialect is None:
+        raise StatementPreparationError(f"{role} dialect is required")
+    if not isinstance(dialect, str):
+        raise StatementPreparationError(f"{role} dialect must be a string")
+    if not dialect.strip():
+        raise StatementPreparationError(f"{role} dialect is required")
+    return dialect
 
 
 def _prepare_statement(
@@ -98,6 +173,7 @@ def _prepare_statement(
     source_dialect: str,
     target_dialect: str,
 ) -> PreparedStatement:
+    """Prepare one validated call; unexpected defects intentionally escape."""
     source_dialect = _require_dialect(source_dialect, role="source")
     target_dialect = _require_dialect(target_dialect, role="target")
     try:
@@ -183,6 +259,11 @@ def _prepare_statement(
         source_dialect=target_dialect,
         target_dialect=target_dialect,
     )
+    sql_fingerprint = fingerprint_statement(
+        sql,
+        source_dialect=source_dialect,
+        target_dialect=target_dialect,
+    )
 
     status = success_envelope(
         warning=(
@@ -193,6 +274,7 @@ def _prepare_statement(
     )
     return {
         **status,
+        "sql_fingerprint": sql_fingerprint,
         "dialect": [source_dialect, target_dialect],
         "statement_type": statement_type,
         "sql": target_sql,

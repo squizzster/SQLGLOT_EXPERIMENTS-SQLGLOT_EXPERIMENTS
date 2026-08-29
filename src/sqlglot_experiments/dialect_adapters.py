@@ -66,6 +66,7 @@ def generate_target_sql(
     *,
     source_dialect: str,
     target_dialect: str,
+    comments: bool = True,
 ) -> str:
     """Render through the adapters for the explicit source and target."""
     dialect: str | type[SQLite]
@@ -77,5 +78,6 @@ def generate_target_sql(
         dialect = target_dialect
     return statement.sql(
         dialect=dialect,
+        comments=comments,
         unsupported_level=ErrorLevel.RAISE,
     )

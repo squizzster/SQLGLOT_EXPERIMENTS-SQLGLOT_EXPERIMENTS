@@ -7,16 +7,20 @@ prepare_statement(
     bindings: Sequence[object] | Mapping[str, object] | None = None,
     source_dialect: str,
     target_dialect: str,
-) -> PreparedStatement
+) -> PreparationResult
 ```
 
 Both dialects are required. `bindings` is omitted when the input has no
 placeholders. Otherwise it resolves values through the declared source
-dialect's logical parameter slots. The function returns one compact,
-execution-complete package:
+dialect's logical parameter slots. Every return follows the
+[public API envelope](API_ENVELOPE.md). A successful replacement returns one
+compact, execution-complete package:
 
 ```python
 {
+    "success": True,
+    "warnings": True,
+    "msg": "warnings: replaced 1 hardcoded value with placeholder",
     "dialect": "sqlite,sqlite",
     "statement_type": "SELECT",
     "sql": "SELECT * FROM orders WHERE category = ?",
@@ -25,6 +29,17 @@ execution-complete package:
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
     },
+}
+```
+
+SQL requiring no replacement returns `success: True`, `warnings: False`, and
+`msg: "success: ok"`. Failure returns only:
+
+```python
+{
+    "success": False,
+    "warnings": False,
+    "msg": "failure: <compact library-owned reason>",
 }
 ```
 
@@ -40,7 +55,7 @@ both remain `0` for already-parameterized input. An `INSERT` without a column
 list can still lift its values, but its field count is `0` because the SQL does
 not name the fields.
 
-Missing or extra caller bindings raise `BindingCountError`; a successful return
+Missing or extra caller bindings return a failure envelope. A successful return
 therefore always contains every binding needed by its generated SQL. Repeated
 source slots reuse one input value and expand into generated-target-placeholder
 order when necessary.

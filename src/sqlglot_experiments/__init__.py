@@ -1,24 +1,28 @@
+from sqlglot_experiments.api_envelope import (
+    ApiEnvelope,
+    ApiFailureEnvelope,
+    ApiSuccessEnvelope,
+)
 from sqlglot_experiments.statement_api import (
     Analysis,
     Binding,
-    BindingCountError,
     InputBindings,
+    PreparationResult,
     PreparedStatement,
-    StatementPreparationError,
     StatementType,
-    UnsupportedStatementError,
     prepare_statement,
 )
 
 __all__ = [
     "Analysis",
+    "ApiEnvelope",
+    "ApiFailureEnvelope",
+    "ApiSuccessEnvelope",
     "Binding",
-    "BindingCountError",
     "InputBindings",
+    "PreparationResult",
     "PreparedStatement",
-    "StatementPreparationError",
     "StatementType",
-    "UnsupportedStatementError",
     "prepare_statement",
 ]
 

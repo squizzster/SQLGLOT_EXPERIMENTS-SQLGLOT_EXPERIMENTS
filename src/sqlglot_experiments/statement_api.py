@@ -4,7 +4,14 @@ from decimal import Decimal
 from typing import Literal, TypedDict, cast
 
 from sqlglot import Dialect, exp, parse
+from sqlglot.errors import ParseError, SqlglotError, TokenError, UnsupportedError
 
+from sqlglot_experiments.api_envelope import (
+    ApiFailureEnvelope,
+    ApiSuccessEnvelope,
+    failure_envelope,
+    success_envelope,
+)
 from sqlglot_experiments.dialect_adapters import generate_target_sql, parsing_dialect
 from sqlglot_experiments.source_parameters import (
     Binding,
@@ -22,12 +29,15 @@ class Analysis(TypedDict):
     hardcoded_field_count: int
 
 
-class PreparedStatement(TypedDict):
+class PreparedStatement(ApiSuccessEnvelope):
     dialect: str
     statement_type: StatementType
     sql: str
     bindings: list[Binding]
     analysis: Analysis
+
+
+PreparationResult = PreparedStatement | ApiFailureEnvelope
 
 
 class StatementPreparationError(ValueError):
@@ -66,8 +76,28 @@ def prepare_statement(
     bindings: InputBindings | None = None,
     source_dialect: str,
     target_dialect: str,
+) -> PreparationResult:
+    """Return the library-owned envelope and a payload only when successful."""
+    try:
+        return _prepare_statement(
+            sql,
+            bindings=bindings,
+            source_dialect=source_dialect,
+            target_dialect=target_dialect,
+        )
+    except (StatementPreparationError, SqlglotError) as error:
+        return failure_envelope(_failure_reason(error))
+    except Exception:  # noqa: BLE001 - the public envelope owns failure disclosure
+        return failure_envelope("internal preparation error")
+
+
+def _prepare_statement(
+    sql: str,
+    *,
+    bindings: InputBindings | None,
+    source_dialect: str,
+    target_dialect: str,
 ) -> PreparedStatement:
-    """Return target SQL and every binding required to execute it."""
     source_dialect = _require_dialect(source_dialect, role="source")
     target_dialect = _require_dialect(target_dialect, role="target")
     try:
@@ -154,7 +184,15 @@ def prepare_statement(
         target_dialect=target_dialect,
     )
 
+    status = success_envelope(
+        warning=(
+            _hardcoded_warning(hardcoded_value_count)
+            if hardcoded_value_count > 0
+            else None
+        )
+    )
     return {
+        **status,
         "dialect": f"{source_dialect},{target_dialect}",
         "statement_type": statement_type,
         "sql": target_sql,
@@ -166,11 +204,40 @@ def prepare_statement(
     }
 
 
+def _hardcoded_warning(count: int) -> str:
+    value_word = "value" if count == 1 else "values"
+    placeholder_word = "placeholder" if count == 1 else "placeholders"
+    return f"replaced {count} hardcoded {value_word} with {placeholder_word}"
+
+
+def _failure_reason(error: StatementPreparationError | SqlglotError) -> str:
+    if isinstance(error, BindingCountError):
+        reason = f"bindings: {error}"
+    elif isinstance(error, UnsupportedStatementError):
+        reason = f"unsupported statement: {error}"
+    elif isinstance(error, ParseError):
+        reason = "invalid SQL syntax"
+    elif isinstance(error, TokenError):
+        reason = "invalid SQL tokens"
+    elif isinstance(error, UnsupportedError):
+        reason = "target dialect cannot render the statement"
+    elif isinstance(error, StatementPreparationError):
+        reason = str(error)
+    else:
+        reason = "SQLGlot processing failed"
+    return reason
+
+
 def _require_dialect(dialect: str, *, role: str) -> str:
     if not dialect or not dialect.strip():
         raise StatementPreparationError(f"{role}_dialect must be explicit")
     normalized = dialect.strip().lower()
-    Dialect.get_or_raise(normalized)
+    try:
+        Dialect.get_or_raise(normalized)
+    except ValueError as error:
+        raise StatementPreparationError(
+            f"unsupported {role} dialect: {normalized}"
+        ) from error
     return normalized
 
 
@@ -377,7 +444,12 @@ def _target_binding_value(
     target_dialect: str,
 ) -> Binding:
     if target_dialect == "sqlite" and isinstance(value, Decimal):
-        return float(value)
+        try:
+            return float(value)
+        except (OverflowError, ValueError) as error:
+            raise StatementPreparationError(
+                "binding cannot be represented by the SQLite target"
+            ) from error
     return value
 
 

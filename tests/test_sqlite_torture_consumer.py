@@ -43,7 +43,9 @@ class SqliteTortureConsumerTests(unittest.TestCase):
         rejected = {
             result["name"]: (
                 result["failure_kind"],
-                result["error"]["exception"],
+                result["package"]["success"],
+                result["package"]["warnings"],
+                result["package"]["msg"],
             )
             for result in self.report["results"]
             if result["status"] == "expected_brick_rejection"
@@ -53,15 +55,21 @@ class SqliteTortureConsumerTests(unittest.TestCase):
             {
                 "binding.missing_named_parameter": (
                     "binding_count",
-                    "BindingCountError",
+                    False,
+                    False,
+                    "failure: bindings: missing caller binding for SQLite parameter :missing",
                 ),
                 "binding.multiple_statements_rejected": (
                     "statement_count",
-                    "StatementPreparationError",
+                    False,
+                    False,
+                    "failure: expected exactly one SQL statement, received 2",
                 ),
                 "binding.wrong_parameter_count": (
                     "binding_count",
-                    "BindingCountError",
+                    False,
+                    False,
+                    "failure: bindings: statement requires 2 caller bindings; received 1",
                 ),
             },
         )
@@ -90,6 +98,15 @@ class SqliteTortureConsumerTests(unittest.TestCase):
                 for result in external_with_replacements
             )
         )
+        self.assertTrue(
+            all(result["package"]["warnings"] for result in external_with_replacements)
+        )
+        self.assertTrue(
+            all(
+                result["package"]["msg"].startswith("warnings: replaced ")
+                for result in external_with_replacements
+            )
+        )
 
     def test_local_fixed_and_placeholder_pairs_converge(self) -> None:
         local = {
@@ -111,10 +128,15 @@ class SqliteTortureConsumerTests(unittest.TestCase):
                 self.assertGreater(
                     fixed["package"]["analysis"]["hardcoded_value_count"], 0
                 )
+                self.assertEqual(fixed["package"]["success"], True)
+                self.assertEqual(fixed["package"]["warnings"], True)
                 self.assertEqual(
                     placeholder["package"]["analysis"]["hardcoded_value_count"],
                     0,
                 )
+                self.assertEqual(placeholder["package"]["success"], True)
+                self.assertEqual(placeholder["package"]["warnings"], False)
+                self.assertEqual(placeholder["package"]["msg"], "success: ok")
 
     def test_mapping_input_is_resolved_by_the_low_level_api(self) -> None:
         result = next(

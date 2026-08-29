@@ -312,10 +312,17 @@ def _resolve_slot_values(
     if isinstance(supplied, (str, bytes, bytearray, memoryview)):
         raise ParameterPlanningError("bindings must be a sequence or mapping of values")
 
-    values = list(supplied)
-    if len(values) != len(slots):
+    try:
+        values = list(supplied)
+    except TypeError as error:
         raise ParameterPlanningError(
-            f"statement requires {len(slots)} caller binding(s), received {len(values)}"
+            "bindings must be a sequence or mapping of values"
+        ) from error
+    if len(values) != len(slots):
+        binding_word = "binding" if len(slots) == 1 else "bindings"
+        raise ParameterPlanningError(
+            f"statement requires {len(slots)} caller {binding_word}; "
+            f"received {len(values)}"
         )
     return {slot.number: values[slot.number - 1] for slot in slots}
 

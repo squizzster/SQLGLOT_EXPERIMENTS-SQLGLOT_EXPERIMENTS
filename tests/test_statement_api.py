@@ -5,16 +5,46 @@ import tempfile
 import unittest
 from decimal import Decimal
 from pathlib import Path
-
-from sqlglot import ParseError
+from typing import cast
+from unittest.mock import patch
 
 from demo.sqlite_consumer import create_demo_database, execute_package, run_demo
 from sqlglot_experiments import (
-    BindingCountError,
-    StatementPreparationError,
-    UnsupportedStatementError,
-    prepare_statement,
+    InputBindings,
+    PreparationResult,
+    PreparedStatement,
 )
+from sqlglot_experiments import prepare_statement as prepare_statement_result
+
+
+def prepare_statement(
+    sql: str,
+    *,
+    bindings: InputBindings | None = None,
+    source_dialect: str,
+    target_dialect: str,
+) -> PreparedStatement:
+    result = prepare_statement_result(
+        sql,
+        bindings=bindings,
+        source_dialect=source_dialect,
+        target_dialect=target_dialect,
+    )
+    if not result["success"]:
+        raise AssertionError(result["msg"])
+    return cast(PreparedStatement, result)
+
+
+def assert_failure(
+    testcase: unittest.TestCase,
+    result: PreparationResult,
+    *,
+    message_prefix: str,
+) -> None:
+    testcase.assertEqual(result["success"], False)
+    testcase.assertEqual(result["warnings"], False)
+    testcase.assertTrue(result["msg"].startswith(message_prefix), result["msg"])
+    testcase.assertEqual(set(result), {"success", "warnings", "msg"})
 
 
 class StatementApiTests(unittest.TestCase):
@@ -32,6 +62,9 @@ class StatementApiTests(unittest.TestCase):
         self.assertEqual(
             package,
             {
+                "success": True,
+                "warnings": True,
+                "msg": "warnings: replaced 1 hardcoded value with placeholder",
                 "dialect": "sqlite,sqlite",
                 "statement_type": "SELECT",
                 "sql": (
@@ -57,6 +90,12 @@ class StatementApiTests(unittest.TestCase):
         )
 
         self.assertEqual(package["statement_type"], "INSERT")
+        self.assertEqual(package["success"], True)
+        self.assertEqual(package["warnings"], True)
+        self.assertEqual(
+            package["msg"],
+            "warnings: replaced 4 hardcoded values with placeholders",
+        )
         self.assertEqual(package["bindings"], ["Mark", 42, "Paul", 43])
         self.assertEqual(
             package["sql"],
@@ -167,6 +206,10 @@ class StatementApiTests(unittest.TestCase):
 
         self.assertEqual(package["bindings"], [])
         self.assertEqual(
+            (package["success"], package["warnings"], package["msg"]),
+            (True, False, "success: ok"),
+        )
+        self.assertEqual(
             package["analysis"],
             {"hardcoded_value_count": 0, "hardcoded_field_count": 0},
         )
@@ -182,6 +225,9 @@ class StatementApiTests(unittest.TestCase):
         self.assertEqual(
             package,
             {
+                "success": True,
+                "warnings": False,
+                "msg": "success: ok",
                 "dialect": "sqlite,sqlite",
                 "statement_type": "SELECT",
                 "sql": "SELECT * FROM orders WHERE category = ?",
@@ -288,13 +334,17 @@ class StatementApiTests(unittest.TestCase):
         )
 
         self.assertEqual(package["bindings"], [30, 40, 10])
-        with self.assertRaises(BindingCountError):
-            prepare_statement(
+        failure = prepare_statement_result(
                 "SELECT ?3, ?, ?1",
                 bindings=[10, 20, 30],
                 source_dialect="sqlite",
                 target_dialect="sqlite",
-            )
+        )
+        assert_failure(
+            self,
+            failure,
+            message_prefix="failure: bindings:",
+        )
 
     def test_sqlite_dollar_names_are_not_numeric_slots(self) -> None:
         sequence_package = prepare_statement(
@@ -328,12 +378,17 @@ class StatementApiTests(unittest.TestCase):
             ("SELECT ?, :x", {"x": 7}),
             ("SELECT :missing", {}),
         ):
-            with self.subTest(sql=sql), self.assertRaises(BindingCountError):
-                prepare_statement(
+            with self.subTest(sql=sql):
+                failure = prepare_statement_result(
                     sql,
                     bindings=bindings,
                     source_dialect="sqlite",
                     target_dialect="sqlite",
+                )
+                assert_failure(
+                    self,
+                    failure,
+                    message_prefix="failure: bindings:",
                 )
 
     def test_sqlite_explicit_parameter_can_name_an_existing_slot(self) -> None:
@@ -421,16 +476,35 @@ class StatementApiTests(unittest.TestCase):
             ("SELECT * FROM people WHERE id = ?", [1, 2]),
         ]
         for sql, bindings in cases:
-            with (
-                self.subTest(sql=sql, bindings=bindings),
-                self.assertRaises(BindingCountError),
-            ):
-                prepare_statement(
+            with self.subTest(sql=sql, bindings=bindings):
+                failure = prepare_statement_result(
                     sql,
                     bindings=bindings,
                     source_dialect="sqlite",
                     target_dialect="sqlite",
                 )
+                assert_failure(
+                    self,
+                    failure,
+                    message_prefix="failure: bindings:",
+                )
+
+    def test_invalid_binding_container_returns_a_controlled_failure(self) -> None:
+        result = prepare_statement_result(
+            "SELECT * FROM people WHERE id = ?",
+            bindings=42,  # type: ignore[arg-type]
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "success": False,
+                "warnings": False,
+                "msg": "failure: bindings: bindings must be a sequence or mapping of values",
+            },
+        )
 
     def test_dollar_text_in_a_string_is_not_a_placeholder(self) -> None:
         package = prepare_statement(
@@ -454,32 +528,101 @@ class StatementApiTests(unittest.TestCase):
         self.assertIn("'?' AS marker", package["sql"])
 
     def test_multiple_statements_are_rejected(self) -> None:
-        with self.assertRaises(StatementPreparationError):
-            prepare_statement(
-                "SELECT 1; SELECT 2",
-                source_dialect="sqlite",
-                target_dialect="sqlite",
-            )
+        result = prepare_statement_result(
+            "SELECT 1; SELECT 2",
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        assert_failure(
+            self,
+            result,
+            message_prefix="failure: expected exactly one SQL statement",
+        )
 
     def test_unsupported_statement_is_rejected(self) -> None:
-        with self.assertRaises(UnsupportedStatementError):
-            prepare_statement(
-                "CREATE TABLE example (id INTEGER)",
+        result = prepare_statement_result(
+            "CREATE TABLE example (id INTEGER)",
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        assert_failure(
+            self,
+            result,
+            message_prefix="failure: unsupported statement:",
+        )
+
+    def test_malformed_statement_returns_our_controlled_failure(self) -> None:
+        result = prepare_statement_result(
+            "SELECT FROM",
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "success": False,
+                "warnings": False,
+                "msg": "failure: invalid SQL syntax",
+            },
+        )
+
+    def test_external_token_error_returns_our_controlled_failure(self) -> None:
+        result = prepare_statement_result(
+            "SELECT $2,$1,$2",
+            bindings=[4, 9],
+            source_dialect="postgres",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "success": False,
+                "warnings": False,
+                "msg": "failure: invalid SQL tokens",
+            },
+        )
+
+    def test_unexpected_internal_error_returns_our_controlled_failure(self) -> None:
+        with patch(
+            "sqlglot_experiments.statement_api._prepare_statement",
+            side_effect=RuntimeError("external details must not escape"),
+        ):
+            result = prepare_statement_result(
+                "SELECT 1",
                 source_dialect="sqlite",
                 target_dialect="sqlite",
             )
 
-    def test_malformed_statement_raises_sqlglot_parse_error(self) -> None:
-        with self.assertRaises(ParseError):
-            prepare_statement(
-                "SELECT FROM",
-                source_dialect="sqlite",
-                target_dialect="sqlite",
-            )
+        self.assertEqual(
+            result,
+            {
+                "success": False,
+                "warnings": False,
+                "msg": "failure: internal preparation error",
+            },
+        )
+
+    def test_envelope_message_has_a_hard_compact_limit(self) -> None:
+        parameter_name = "x" * 2_000
+        result = prepare_statement_result(
+            f"SELECT :{parameter_name}",
+            bindings={},
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(result["success"], False)
+        self.assertEqual(result["warnings"], False)
+        self.assertLessEqual(len(result["msg"]), 240)
+        self.assertTrue(result["msg"].endswith("..."))
 
     def test_source_and_target_are_required(self) -> None:
         with self.assertRaises(TypeError):
-            prepare_statement("SELECT 1")  # type: ignore[call-arg]
+            prepare_statement_result("SELECT 1")  # type: ignore[call-arg]
 
     def test_postgres_target_uses_sqlglot_postgres_placeholder(self) -> None:
         package = prepare_statement(
@@ -551,22 +694,30 @@ class StatementApiTests(unittest.TestCase):
 
         self.assertEqual(package["sql"], "SELECT ?, ?, ?")
         self.assertEqual(package["bindings"], [9, 4, 9])
-        with self.assertRaises(BindingCountError):
-            prepare_statement(
-                "SELECT $2",
-                bindings=[9],
-                source_dialect="postgres",
-                target_dialect="sqlite",
-            )
+        failure = prepare_statement_result(
+            "SELECT $2",
+            bindings=[9],
+            source_dialect="postgres",
+            target_dialect="sqlite",
+        )
+        assert_failure(
+            self,
+            failure,
+            message_prefix="failure: bindings:",
+        )
 
     def test_postgres_source_mapping_is_not_inferred(self) -> None:
-        with self.assertRaises(BindingCountError):
-            prepare_statement(
-                "SELECT $1",
-                bindings={"1": 7},
-                source_dialect="postgres",
-                target_dialect="sqlite",
-            )
+        failure = prepare_statement_result(
+            "SELECT $1",
+            bindings={"1": 7},
+            source_dialect="postgres",
+            target_dialect="sqlite",
+        )
+        assert_failure(
+            self,
+            failure,
+            message_prefix="failure: bindings:",
+        )
 
     def test_database_qualified_fields_remain_distinct(self) -> None:
         package = prepare_statement(

@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
-from sqlglot_experiments import PreparedStatement, prepare_statement
+from sqlglot_experiments import (
+    PreparationResult,
+    PreparedStatement,
+    prepare_statement,
+)
 
 DEFAULT_DATABASE = Path("runtime/sqlite_consumer.sqlite3")
 
@@ -56,26 +60,36 @@ def execute_package(
     return cursor.fetchall()
 
 
+def _require_prepared(result: PreparationResult) -> PreparedStatement:
+    if not result["success"]:
+        raise RuntimeError(result["msg"])
+    return cast(PreparedStatement, result)
+
+
 def run_demo(database: Path = DEFAULT_DATABASE) -> DemoReport:
     create_demo_database(database)
-    hardcoded_package = prepare_statement(
-        """
-        SELECT id, name, value, category, created_at
-        FROM big_table
-        WHERE category = 'sales'
-        """,
-        source_dialect="sqlite",
-        target_dialect="sqlite",
+    hardcoded_package = _require_prepared(
+        prepare_statement(
+            """
+            SELECT id, name, value, category, created_at
+            FROM big_table
+            WHERE category = 'sales'
+            """,
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
     )
-    parameterized_package = prepare_statement(
-        """
-        SELECT id, name, value, category, created_at
-        FROM big_table
-        WHERE category = ?
-        """,
-        bindings=["sales"],
-        source_dialect="sqlite",
-        target_dialect="sqlite",
+    parameterized_package = _require_prepared(
+        prepare_statement(
+            """
+            SELECT id, name, value, category, created_at
+            FROM big_table
+            WHERE category = ?
+            """,
+            bindings=["sales"],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
     )
     with sqlite3.connect(database) as connection:
         hardcoded_rows = execute_package(connection, hardcoded_package)

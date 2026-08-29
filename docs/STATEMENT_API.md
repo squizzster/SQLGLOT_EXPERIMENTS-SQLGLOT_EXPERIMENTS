@@ -39,8 +39,10 @@ The AST transform currently lifts direct constants from:
 
 Projection constants, `LIMIT`, JSON paths, function configuration arguments,
 typed or wrapped constants, computed assignments, and `IS NULL` remain in the
-SQL. Existing placeholders are rejected because SQL text alone does not contain
-their binding values, so the API cannot return a complete ordered binding list.
+SQL. Placeholders recognized by the source dialect are rejected because SQL text
+alone does not contain their binding values, so the API cannot return a complete
+ordered binding list. SQLite's `?`, `:name`, `@name`, `$name`, and `$1` forms are
+covered; driver-only template markers outside a SQLGlot dialect are not.
 
 The SQLite target is execution-tested with Python's `sqlite3` driver. Other
 targets use SQLGlot's target rendering, including its placeholder spelling; that

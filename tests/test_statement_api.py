@@ -171,12 +171,26 @@ class StatementApiTests(unittest.TestCase):
         )
 
     def test_existing_placeholder_is_rejected(self) -> None:
-        with self.assertRaises(ExistingPlaceholderError):
-            prepare_statement(
-                "SELECT * FROM people WHERE category = ?",
-                source_dialect="sqlite",
-                target_dialect="sqlite",
-            )
+        for placeholder in ("?", ":category", "@category", "$category", "$1"):
+            with (
+                self.subTest(placeholder=placeholder),
+                self.assertRaises(ExistingPlaceholderError),
+            ):
+                prepare_statement(
+                    f"SELECT * FROM people WHERE category = {placeholder}",
+                    source_dialect="sqlite",
+                    target_dialect="sqlite",
+                )
+
+    def test_dollar_text_in_a_string_is_not_a_placeholder(self) -> None:
+        package = prepare_statement(
+            "SELECT '$category' AS marker FROM people WHERE id = 1",
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(package["bindings"], [1])
+        self.assertIn("'$category'", package["sql"])
 
     def test_multiple_statements_are_rejected(self) -> None:
         with self.assertRaises(StatementPreparationError):

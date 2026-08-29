@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Literal, TypedDict, cast
 
 from sqlglot import Dialect, ErrorLevel, exp, parse
+from sqlglot.tokenizer_core import TokenType
 
 Binding = str | int | float | Decimal | bool | None
 StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE"]
@@ -73,6 +74,7 @@ def prepare_statement(
         target_dialect=source_dialect,
     )
     _reject_existing_placeholders(
+        sql,
         source_ast,
         source_dialect=source_dialect,
         target_dialect=target_dialect,
@@ -146,14 +148,20 @@ def _statement_type(
 
 
 def _reject_existing_placeholders(
+    sql: str,
     statement: exp.Expr,
     *,
     source_dialect: str,
     target_dialect: str,
 ) -> None:
-    if any(
+    ast_has_placeholder = any(
         isinstance(node, (exp.Placeholder, exp.Parameter)) for node in statement.walk()
-    ):
+    )
+    sqlite_has_dollar_placeholder = source_dialect == "sqlite" and any(
+        token.token_type is TokenType.VAR and token.text.startswith("$")
+        for token in Dialect.get_or_raise(source_dialect).tokenize(sql)
+    )
+    if ast_has_placeholder or sqlite_has_dollar_placeholder:
         raise ExistingPlaceholderError(
             "existing placeholders require caller-supplied bindings, which this "
             "prototype does not yet accept"

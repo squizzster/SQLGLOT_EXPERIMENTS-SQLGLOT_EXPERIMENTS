@@ -20,6 +20,10 @@ and `UPDATE` shapes. It tries the standard Python DB-API placeholder styles,
 common PostgreSQL/SQLite spellings, qualified names, and external-value
 exclusion without claiming a universal driver adapter.
 
+## Design notes
+
+- [AST source and target](docs/AST_SOURCE_TARGET.md)
+
 ## Run
 
 ```bash

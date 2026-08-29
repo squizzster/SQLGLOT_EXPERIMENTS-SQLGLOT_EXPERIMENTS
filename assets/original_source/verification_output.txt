@@ -1,0 +1,25 @@
+SQLite version: 3.46.1
+JSON1 smoke test: 7
+unixepoch smoke test: 1785542400
+
+Columns:
+['user_id', 'session_id', 'category_path', 'top_product_name', 'total_events', 'peak_rolling_spend', 'session_category_revenue']
+
+Rows:
+(10, 2, 'Electronics > Computers > Laptops', 'Pro Laptop', 2, 100.0, 250)
+(10, 2, 'Electronics > Computers > Laptops', None, 2, 100.0, 250)
+(10, 2, None, None, 2, 100.0, 250)
+(10, 3, 'Electronics > Accessories', 'Wireless Mouse', 1, 125.0, 200)
+(10, 3, 'Electronics > Accessories', None, 1, 125.0, 200)
+(10, 3, None, None, 1, 125.0, 200)
+(10, None, None, None, 3, 125.0, 450)
+(20, 1, 'Home > Kitchen', 'Chef Knife', 2, 100.0, 200)
+(20, 1, 'Home > Kitchen', None, 2, 100.0, 200)
+(20, 1, None, None, 2, 100.0, 200)
+(20, None, None, None, 2, 100.0, 200)
+(None, None, None, None, 5, 125.0, 650)
+
+Assertions: PASS
+
+EXPLAIN QUERY PLAN (selected lines):
+(26, 22, 0, 'SEARCH e USING INDEX idx_clickstream_event_time (event_time>? AND event_time<?)')

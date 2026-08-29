@@ -1,0 +1,19 @@
+[project]
+name = "sqlglot-experiments"
+version = "0.1.0"
+description = "Evidence-led experiments with SQLGlot"
+readme = "README.md"
+authors = [
+    { name = "Mark", email = "squizzster@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "sqlglot>=30.17.0",
+]
+
+[project.scripts]
+sqlglot-experiments = "sqlglot_experiments:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"

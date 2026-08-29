@@ -216,10 +216,10 @@ class StatementApiTests(unittest.TestCase):
                 )
                 self.assertEqual(package["bindings"], ["sales"])
 
-    def test_repeated_named_placeholders_take_values_by_occurrence(self) -> None:
+    def test_repeated_named_placeholders_reuse_the_source_slot(self) -> None:
         package = prepare_statement(
             "SELECT * FROM jobs WHERE tenant = :value OR owner = :value",
-            bindings=[7, "Mark"],
+            bindings=[7],
             source_dialect="sqlite",
             target_dialect="sqlite",
         )
@@ -228,7 +228,137 @@ class StatementApiTests(unittest.TestCase):
             package["sql"],
             "SELECT * FROM jobs WHERE tenant = ? OR owner = ?",
         )
-        self.assertEqual(package["bindings"], [7, "Mark"])
+        self.assertEqual(package["bindings"], [7, 7])
+
+    def test_named_mapping_handles_reuse_and_keyword_like_names(self) -> None:
+        supplied = {
+            "x": 7,
+            "text": "a:b?%",
+            "nothing": None,
+            "blob": b"abc",
+        }
+        package = prepare_statement(
+            "SELECT :x+:x, :text, :nothing, :blob",
+            bindings=supplied,
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(package["sql"], "SELECT ? + ?, ?, ?, ?")
+        self.assertEqual(
+            package["bindings"],
+            [7, 7, "a:b?%", None, b"abc"],
+        )
+        self.assertEqual(
+            supplied,
+            {"x": 7, "text": "a:b?%", "nothing": None, "blob": b"abc"},
+        )
+
+    def test_sqlite_numbered_parameters_reuse_explicit_slots(self) -> None:
+        package = prepare_statement(
+            "SELECT ?2, ?1, ?2 + ?1",
+            bindings=[4, 9],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(package["sql"], "SELECT ?, ?, ? + ?")
+        self.assertEqual(package["bindings"], [9, 4, 9, 4])
+
+    def test_numbered_slots_follow_generated_limit_offset_order(self) -> None:
+        package = prepare_statement(
+            "SELECT row_id FROM set_left ORDER BY row_id LIMIT ?2, ?1",
+            bindings=[3, 2],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(
+            package["sql"],
+            "SELECT row_id FROM set_left ORDER BY row_id LIMIT ? OFFSET ?",
+        )
+        self.assertEqual(package["bindings"], [3, 2])
+
+    def test_sqlite_slot_allocation_handles_gaps_and_explicit_references(self) -> None:
+        package = prepare_statement(
+            "SELECT ?3, ?, ?1",
+            bindings=[10, 20, 30, 40],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(package["bindings"], [30, 40, 10])
+        with self.assertRaises(BindingCountError):
+            prepare_statement(
+                "SELECT ?3, ?, ?1",
+                bindings=[10, 20, 30],
+                source_dialect="sqlite",
+                target_dialect="sqlite",
+            )
+
+    def test_sqlite_dollar_names_are_not_numeric_slots(self) -> None:
+        sequence_package = prepare_statement(
+            "SELECT $2, $1, $2",
+            bindings=[10, 20],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+        mapping_package = prepare_statement(
+            "SELECT $2, $1, $2",
+            bindings={"1": 10, "2": 20},
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(sequence_package["bindings"], [10, 20, 10])
+        self.assertEqual(mapping_package["bindings"], [20, 10, 20])
+
+    def test_sqlite_mapping_uses_prefixless_names_for_distinct_slots(self) -> None:
+        package = prepare_statement(
+            "SELECT :x, @x, $x",
+            bindings={"x": 7, "unused": "ignored"},
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(package["bindings"], [7, 7, 7])
+
+    def test_mapping_rejects_anonymous_or_missing_sqlite_slots(self) -> None:
+        for sql, bindings in (
+            ("SELECT ?, :x", {"x": 7}),
+            ("SELECT :missing", {}),
+        ):
+            with self.subTest(sql=sql), self.assertRaises(BindingCountError):
+                prepare_statement(
+                    sql,
+                    bindings=bindings,
+                    source_dialect="sqlite",
+                    target_dialect="sqlite",
+                )
+
+    def test_sqlite_explicit_parameter_can_name_an_existing_slot(self) -> None:
+        package = prepare_statement(
+            "SELECT ?, ?1",
+            bindings={"1": 7},
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(package["bindings"], [7, 7])
+
+    def test_reused_source_slot_and_lifted_literal_follow_target_order(self) -> None:
+        package = prepare_statement(
+            """
+            SELECT * FROM jobs
+            WHERE tenant = :x AND state = 'open' OR owner = :x
+            """,
+            bindings={"x": 7},
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(package["bindings"], [7, "open", 7])
+        self.assertEqual(package["analysis"]["hardcoded_value_count"], 1)
 
     def test_existing_and_hardcoded_values_share_target_sql_order(self) -> None:
         package = prepare_statement(
@@ -369,6 +499,20 @@ class StatementApiTests(unittest.TestCase):
         )
         self.assertEqual(package["bindings"], ["sales", "active"])
 
+    def test_reused_sqlite_slot_is_expanded_for_postgres_target(self) -> None:
+        package = prepare_statement(
+            "SELECT :x, :x, status FROM jobs WHERE state = 'open'",
+            bindings={"x": 7},
+            source_dialect="sqlite",
+            target_dialect="postgres",
+        )
+
+        self.assertEqual(
+            package["sql"],
+            "SELECT %s, %s, status FROM jobs WHERE state = %s",
+        )
+        self.assertEqual(package["bindings"], [7, 7, "open"])
+
     def test_caller_decimal_is_preserved_for_postgres_target(self) -> None:
         value = Decimal("1234567890.123456789")
         package = prepare_statement(
@@ -396,6 +540,33 @@ class StatementApiTests(unittest.TestCase):
             "SELECT * FROM jobs WHERE tenant = ? AND state = ?",
         )
         self.assertEqual(package["bindings"], [7, "open"])
+
+    def test_postgres_numeric_slots_are_reused_and_can_have_gaps(self) -> None:
+        package = prepare_statement(
+            "SELECT $2, $1, $2",
+            bindings=[4, 9],
+            source_dialect="postgres",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(package["sql"], "SELECT ?, ?, ?")
+        self.assertEqual(package["bindings"], [9, 4, 9])
+        with self.assertRaises(BindingCountError):
+            prepare_statement(
+                "SELECT $2",
+                bindings=[9],
+                source_dialect="postgres",
+                target_dialect="sqlite",
+            )
+
+    def test_postgres_source_mapping_is_not_inferred(self) -> None:
+        with self.assertRaises(BindingCountError):
+            prepare_statement(
+                "SELECT $1",
+                bindings={"1": 7},
+                source_dialect="postgres",
+                target_dialect="sqlite",
+            )
 
     def test_database_qualified_fields_remain_distinct(self) -> None:
         package = prepare_statement(
@@ -521,6 +692,88 @@ class SqliteConsumerTests(unittest.TestCase):
         self.assertEqual(prepared_rows, direct_rows)
         self.assertGreater(package["analysis"]["hardcoded_value_count"], 0)
         self.assertEqual(package["sql"].count("?"), len(package["bindings"]))
+
+    def test_sqlite_numeric_cast_affinity_survives_target_rendering(self) -> None:
+        sql = "SELECT CAST('3.0e5' AS NUMERIC)"
+        package = prepare_statement(
+            sql,
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        with sqlite3.connect(":memory:") as connection:
+            direct = connection.execute(sql).fetchone()
+            prepared = connection.execute(
+                package["sql"], package["bindings"]
+            ).fetchone()
+
+        self.assertEqual(package["sql"], "SELECT CAST('3.0e5' AS NUMERIC)")
+        self.assertEqual(prepared, direct)
+        self.assertIs(type(prepared[0]), int)
+
+    def test_sqlite_cast_affinities_survive_same_dialect_rendering(self) -> None:
+        for type_name in (
+            "BOOLEAN",
+            "BINARY",
+            "VARBINARY",
+            "DATE",
+            "BLOB",
+            "DECIMAL",
+            "NUMERIC",
+            "INTEGER",
+            "REAL",
+            "TEXT",
+        ):
+            with self.subTest(type_name=type_name):
+                sql = (
+                    "SELECT CAST(0.5 AS "
+                    f"{type_name}), TYPEOF(CAST(0.5 AS {type_name}))"
+                )
+                package = prepare_statement(
+                    sql,
+                    source_dialect="sqlite",
+                    target_dialect="sqlite",
+                )
+
+                with sqlite3.connect(":memory:") as connection:
+                    direct = connection.execute(sql).fetchone()
+                    prepared = connection.execute(
+                        package["sql"], package["bindings"]
+                    ).fetchone()
+
+                self.assertEqual(prepared, direct)
+
+    def test_sqlite_partial_index_predicate_survives_target_rendering(self) -> None:
+        sql = """
+            SELECT customer_id
+            FROM customers INDEXED BY probe_email_index
+            WHERE email IS NOT NULL
+              AND LOWER(email) = 'ada@example.test'
+        """
+        package = prepare_statement(
+            sql,
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        with sqlite3.connect(":memory:") as connection:
+            connection.execute(
+                "CREATE TABLE customers (customer_id INTEGER, email TEXT)"
+            )
+            connection.execute(
+                """
+                CREATE INDEX probe_email_index
+                ON customers (LOWER(email))
+                WHERE email IS NOT NULL
+                """
+            )
+            connection.execute("INSERT INTO customers VALUES (1, 'ada@example.test')")
+            prepared = connection.execute(
+                package["sql"], package["bindings"]
+            ).fetchall()
+
+        self.assertIn("email IS NOT NULL", package["sql"])
+        self.assertEqual(prepared, [(1,)])
 
 
 if __name__ == "__main__":

@@ -27,12 +27,9 @@ class SqliteTortureConsumerTests(unittest.TestCase):
         self.assertEqual(
             self.report["summary"]["source_status_counts"]["external"],
             {
-                "equivalent": 533,
-                "execution_failure": 1,
+                "equivalent": 538,
                 "expected_brick_rejection": 3,
                 "expected_engine_error": 40,
-                "prepare_failure": 3,
-                "result_mismatch": 1,
             },
         )
         external_failures = {
@@ -40,16 +37,7 @@ class SqliteTortureConsumerTests(unittest.TestCase):
             for result in self.report["failures"]
             if result["source_set"] == "external"
         }
-        self.assertEqual(
-            external_failures,
-            {
-                "binding.named_repeated_and_null",
-                "binding.numbered_parameters",
-                "binding.repeated_named_filter",
-                "index.expression_partial_lookup",
-                "numeric.cast_text_prefix_and_exponent",
-            },
-        )
+        self.assertEqual(external_failures, set())
 
     def test_invalid_input_is_reported_as_early_brick_rejection(self) -> None:
         rejected = {
@@ -128,15 +116,18 @@ class SqliteTortureConsumerTests(unittest.TestCase):
                     0,
                 )
 
-    def test_mapping_input_is_not_repaired_by_the_consumer(self) -> None:
+    def test_mapping_input_is_resolved_by_the_low_level_api(self) -> None:
         result = next(
             result
             for result in self.report["results"]
             if result["name"] == "local.insert.named_mapping"
         )
-        self.assertEqual(result["status"], "execution_failure")
-        self.assertEqual(result["package"]["bindings"], ["id", "label"])
-        self.assertEqual(result["error"]["sqlite_errorname"], "SQLITE_MISMATCH")
+        self.assertEqual(result["status"], "equivalent")
+        self.assertEqual(result["package"]["bindings"], [401, "named"])
+
+    def test_complete_torture_run_has_no_genuine_failures(self) -> None:
+        self.assertEqual(self.report["summary"]["genuine_failure_count"], 0)
+        self.assertEqual(self.report["failures"], [])
 
 
 if __name__ == "__main__":

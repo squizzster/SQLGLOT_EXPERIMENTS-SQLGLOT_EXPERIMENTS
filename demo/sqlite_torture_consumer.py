@@ -17,6 +17,7 @@ from typing import Any, cast
 
 from sqlglot_experiments import (
     BindingCountError,
+    InputBindings,
     StatementPreparationError,
     prepare_statement,
 )
@@ -262,10 +263,10 @@ def _run_case(
         _execute_setup(connection, case)
         params = _decode(case.get("params", []))
         try:
-            # Static cast only: raw mappings still reach the API unchanged.
+            # Static cast only: decoded source bindings reach the API unchanged.
             package = prepare_statement(
                 str(case["sql"]),
-                bindings=cast(Sequence[object], params),
+                bindings=cast(InputBindings, params),
                 source_dialect="sqlite",
                 target_dialect="sqlite",
             )

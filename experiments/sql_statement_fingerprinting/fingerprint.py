@@ -73,16 +73,19 @@ class FingerprintVersions:
 def fingerprint_sql(
     sql: str,
     *,
-    placeholder_profile: PlaceholderProfile | str,
+    placeholder_profile: PlaceholderProfile | str | None = None,
     read: str | None = None,
 ) -> SqlStatementFingerprint:
     """Return a dialect-known fingerprint, or an engine-unknown one if read=None."""
 
-    profile = PlaceholderProfile(placeholder_profile)
     dialect = Dialect.get_or_raise(read) if read else None
-    normalized_sql, pattern, source_bindings = _normalize_placeholders(
-        sql, profile, dialect
-    )
+    if placeholder_profile is None:
+        normalized_sql, pattern, source_bindings = sql, (), ()
+    else:
+        profile = PlaceholderProfile(placeholder_profile)
+        normalized_sql, pattern, source_bindings = _normalize_placeholders(
+            sql, profile, dialect
+        )
 
     expressions = sqlglot.parse(normalized_sql, read=dialect)
     if len(expressions) != 1 or expressions[0] is None:
@@ -130,7 +133,7 @@ def fingerprint_versions(
     sql: str,
     *,
     read: str,
-    placeholder_profile: PlaceholderProfile | str,
+    placeholder_profile: PlaceholderProfile | str | None = None,
 ) -> FingerprintVersions:
     """Run the known and unknown SQLGlot interpretations independently."""
 

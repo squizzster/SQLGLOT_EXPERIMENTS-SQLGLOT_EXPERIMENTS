@@ -49,7 +49,9 @@ rule.
 The SHA is suitable for experimenting with statement-shape grouping. It is not
 a database validation result, semantic-equivalence proof, execution dedupe key,
 authorization decision, or write-idempotency key. Inline literals remain part
-of the shape; external bound values never enter the API.
+of the shape; external bound values never enter the API. SQL without
+placeholders, including the original complex query, omits
+`placeholder_profile` and goes directly to SQLGlot.
 
 ## Run
 

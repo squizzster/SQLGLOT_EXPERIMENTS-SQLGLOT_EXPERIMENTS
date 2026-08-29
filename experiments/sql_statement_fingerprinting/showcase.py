@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from .fingerprint import fingerprint_sql
+from .fingerprint import fingerprint_sql, fingerprint_versions
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +84,14 @@ def main() -> None:
         print(f"  dialect-known:  {known.sha256_hex}")
         print(f"  engine-unknown: {unknown.sha256_hex}")
         print(f"  canonical:      {unknown.canonical_sql}\n")
+
+    complex_sql = (
+        Path(__file__).parents[2] / "assets/original_source/verified_sqlite_query.sql"
+    ).read_text()
+    complex_versions = fingerprint_versions(complex_sql, read="sqlite")
+    print("Original 196-line complex SQLite SELECT")
+    print(f"  dialect-known:  {complex_versions.dialect_known.sha256_hex}")
+    print(f"  engine-unknown: {complex_versions.engine_unknown.sha256_hex}")
 
 
 if __name__ == "__main__":

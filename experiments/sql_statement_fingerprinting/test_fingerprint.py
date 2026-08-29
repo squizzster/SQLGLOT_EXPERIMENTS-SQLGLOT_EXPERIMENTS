@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from .fingerprint import (
     UnsupportedStatementError,
@@ -45,6 +46,17 @@ class FingerprintExperimentTests(unittest.TestCase):
             versions.dialect_known.sha256_hex,
             versions.engine_unknown.sha256_hex,
         )
+
+    def test_original_complex_sql_has_two_fingerprints(self) -> None:
+        sql = (
+            Path(__file__).parents[2]
+            / "assets/original_source/verified_sqlite_query.sql"
+        ).read_text()
+        versions = fingerprint_versions(sql, read="sqlite")
+
+        self.assertEqual(versions.dialect_known.statement_kind, "SELECT")
+        self.assertEqual(versions.engine_unknown.statement_kind, "SELECT")
+        self.assertEqual(versions.dialect_known.source_bindings, ())
 
     def test_same_prepared_insert_is_independent_of_bound_values(self) -> None:
         sql = "INSERT INTO people (forename) VALUES (?)"

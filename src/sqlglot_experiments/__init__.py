@@ -12,6 +12,7 @@ from sqlglot_experiments.statement_api import (
     StatementType,
     prepare_statement,
 )
+from sqlglot_experiments.where_fields import WhereField
 
 __all__ = [
     "Analysis",
@@ -23,6 +24,7 @@ __all__ = [
     "PreparationResult",
     "PreparedStatement",
     "StatementType",
+    "WhereField",
     "prepare_statement",
 ]
 

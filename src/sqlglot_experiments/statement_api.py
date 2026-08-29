@@ -22,6 +22,10 @@ from sqlglot_experiments.source_parameters import (
     plan_source_parameters,
 )
 from sqlglot_experiments.statement_fingerprinting import fingerprint_statement
+from sqlglot_experiments.where_fields import (
+    WhereField,
+    extract_where_fields,
+)
 
 StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE"]
 
@@ -37,6 +41,7 @@ class PreparedStatement(ApiSuccessEnvelope):
     statement_type: StatementType
     sql: str
     bindings: list[Binding]
+    where_fields: list[WhereField]
     analysis: Analysis
 
 
@@ -202,6 +207,7 @@ def _prepare_statement(
         source_dialect=source_dialect,
         target_dialect=source_dialect,
     )
+    where_fields = extract_where_fields(source_ast)
     _require_owned_placeholders(
         source_ast,
         marker_values=marker_values,
@@ -279,6 +285,7 @@ def _prepare_statement(
         "statement_type": statement_type,
         "sql": target_sql,
         "bindings": merged_bindings,
+        "where_fields": where_fields,
         "analysis": {
             "hardcoded_value_count": hardcoded_value_count,
             "hardcoded_field_count": len(field_keys),

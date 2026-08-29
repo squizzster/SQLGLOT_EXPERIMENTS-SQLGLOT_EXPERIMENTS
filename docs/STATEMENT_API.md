@@ -28,6 +28,7 @@ returns one compact, execution-complete package:
     "statement_type": "SELECT",
     "sql": "SELECT * FROM orders WHERE category = ?",
     "bindings": ["sales"],
+    "where_fields": ["orders.category"],
     "analysis": {
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
@@ -75,6 +76,39 @@ example, SQLite `LIMIT ?, ?` becomes `LIMIT ? OFFSET ?`, and the corresponding
 values are reordered with it.
 
 `dialect` is always the ordered `[source, target]` pair.
+
+`where_fields` is always a `list[str]` containing every distinct field found
+beneath `WHERE` nodes. Each item uses the most specific physical SQL
+qualification the source AST proves:
+
+```python
+prepare_statement(
+    "SELECT * FROM main.people AS p WHERE p.id = 1 AND p.status = 'active'",
+    source_dialect="sqlite",
+    target_dialect="sqlite",
+)["where_fields"]
+
+# ["main.people.id", "main.people.status"]
+```
+
+Qualified aliases resolve directly to their physical tables. An unqualified
+field resolves when its non-correlatable query scope has exactly one direct
+physical source, and for a simple `UPDATE` or `DELETE` when there is exactly one
+physical DML source. The three fixed forms are:
+
+```python
+"id"                  # physical table unknown
+"people.id"           # physical table proven; database unknown
+"main.people.id"      # database and physical table proven
+```
+
+Ambiguous joins, potentially correlated unqualified fields, and derived/CTE
+outputs use the bare-field form rather than inventing physical ownership. No
+field is omitted because its source is unknown. Aliases are replaced with their
+physical table names when resolved: `p.id` from `people AS p` becomes
+`people.id`. Repeated strings are returned once, in deterministic AST order. An
+empty array means no field reference was found beneath a `WHERE`; a
+constant-only `WHERE 1 = 1` is one such case.
 
 `hardcoded_value_count` counts replaced occurrences and
 `hardcoded_field_count` counts their distinct AST-associated fields. These

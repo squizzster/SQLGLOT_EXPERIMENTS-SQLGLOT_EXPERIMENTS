@@ -30,7 +30,7 @@ class Analysis(TypedDict):
 
 
 class PreparedStatement(ApiSuccessEnvelope):
-    dialect: str
+    dialect: list[str]
     statement_type: StatementType
     sql: str
     bindings: list[Binding]
@@ -193,7 +193,7 @@ def _prepare_statement(
     )
     return {
         **status,
-        "dialect": f"{source_dialect},{target_dialect}",
+        "dialect": [source_dialect, target_dialect],
         "statement_type": statement_type,
         "sql": target_sql,
         "bindings": merged_bindings,

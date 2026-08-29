@@ -2,11 +2,17 @@
 
 ```python
 prepare_statement(
-    sql: str, *, source_dialect: str, target_dialect: str
+    sql: str,
+    *,
+    bindings: Sequence[object] | None = None,
+    source_dialect: str,
+    target_dialect: str,
 ) -> PreparedStatement
 ```
 
-Both dialects are required. The function returns one compact execution package:
+Both dialects are required. `bindings` is omitted when the input has no
+placeholders; otherwise it contains one value for each placeholder occurrence in
+source SQL order. The function returns one compact, execution-complete package:
 
 ```python
 {
@@ -21,11 +27,22 @@ Both dialects are required. The function returns one compact execution package:
 }
 ```
 
-The bindings are native Python values in generated-placeholder order.
-`hardcoded_value_count` counts occurrences; `hardcoded_field_count` counts
-distinct fields associated by the AST. An `INSERT` without a column list can
-still lift its values, but its field count is `0` because the SQL does not name
-the fields.
+Returned bindings are native Python values in generated-target-placeholder
+order. This may differ from source order when SQLGlot rewrites a construct; for
+example, SQLite `LIMIT ?, ?` becomes `LIMIT ? OFFSET ?`, and the corresponding
+values are reordered with it.
+
+`hardcoded_value_count` counts replaced occurrences and
+`hardcoded_field_count` counts their distinct AST-associated fields. These
+counts are the machine-readable warning that Brick 1 replaced hardcoded values;
+both remain `0` for already-parameterized input. An `INSERT` without a column
+list can still lift its values, but its field count is `0` because the SQL does
+not name the fields.
+
+Missing or extra caller bindings raise `BindingCountError`; a successful return
+therefore always contains every binding needed by its generated SQL. Repeated
+named placeholders still take one input value per occurrence because Brick 1's
+input contract is ordered rather than driver-specific.
 
 ## Prototype scope
 
@@ -39,11 +56,11 @@ The AST transform currently lifts direct constants from:
 
 Projection constants, `LIMIT`, JSON paths, function configuration arguments,
 typed or wrapped constants, computed assignments, and `IS NULL` remain in the
-SQL. Placeholders recognized by the source dialect are rejected because SQL text
-alone does not contain their binding values, so the API cannot return a complete
-ordered binding list. SQLite's `?`, `:name`, `@name`, `$name`, and `$1` forms are
-covered; driver-only template markers outside a SQLGlot dialect are not.
+SQL. SQLite's `?`, `?NNN`, `:name`, `@name`, `$name`, and `$1` forms and
+PostgreSQL numeric parameters are accepted and normalized. Driver-only template
+markers outside the SQLGlot dialect contract are not adapted here.
 
 The SQLite target is execution-tested with Python's `sqlite3` driver. Other
 targets use SQLGlot's target rendering, including its placeholder spelling; that
-is not a universal database-driver adapter or target-engine validation.
+is not target-engine validation. Brick 1 owns analysis and preparation only; a
+later pipeline brick owns database execution.

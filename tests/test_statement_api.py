@@ -3,13 +3,14 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 from sqlglot import ParseError
 
 from demo.sqlite_consumer import create_demo_database, execute_package, run_demo
 from sqlglot_experiments import (
-    ExistingPlaceholderError,
+    BindingCountError,
     StatementPreparationError,
     UnsupportedStatementError,
     prepare_statement,
@@ -170,14 +171,133 @@ class StatementApiTests(unittest.TestCase):
             {"hardcoded_value_count": 0, "hardcoded_field_count": 0},
         )
 
-    def test_existing_placeholder_is_rejected(self) -> None:
-        for placeholder in ("?", ":category", "@category", "$category", "$1"):
+    def test_existing_placeholder_returns_complete_package(self) -> None:
+        package = prepare_statement(
+            "SELECT * FROM orders WHERE category = ?",
+            bindings=["sales"],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(
+            package,
+            {
+                "dialect": "sqlite,sqlite",
+                "statement_type": "SELECT",
+                "sql": "SELECT * FROM orders WHERE category = ?",
+                "bindings": ["sales"],
+                "analysis": {
+                    "hardcoded_value_count": 0,
+                    "hardcoded_field_count": 0,
+                },
+            },
+        )
+
+    def test_sqlite_placeholder_forms_are_normalized_to_qmark(self) -> None:
+        for placeholder in (
+            "?",
+            "?1",
+            ":category",
+            "@category",
+            "$category",
+            "$1",
+        ):
+            with self.subTest(placeholder=placeholder):
+                package = prepare_statement(
+                    f"SELECT * FROM people WHERE category = {placeholder}",
+                    bindings=["sales"],
+                    source_dialect="sqlite",
+                    target_dialect="sqlite",
+                )
+
+                self.assertEqual(
+                    package["sql"],
+                    "SELECT * FROM people WHERE category = ?",
+                )
+                self.assertEqual(package["bindings"], ["sales"])
+
+    def test_repeated_named_placeholders_take_values_by_occurrence(self) -> None:
+        package = prepare_statement(
+            "SELECT * FROM jobs WHERE tenant = :value OR owner = :value",
+            bindings=[7, "Mark"],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(
+            package["sql"],
+            "SELECT * FROM jobs WHERE tenant = ? OR owner = ?",
+        )
+        self.assertEqual(package["bindings"], [7, "Mark"])
+
+    def test_existing_and_hardcoded_values_share_target_sql_order(self) -> None:
+        package = prepare_statement(
+            """
+            SELECT * FROM orders
+            WHERE category = ? AND status = 'open' AND tenant_id = ?
+            """,
+            bindings=["sales", 7],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(
+            package["sql"],
+            "SELECT * FROM orders WHERE category = ? AND status = ? AND tenant_id = ?",
+        )
+        self.assertEqual(package["bindings"], ["sales", "open", 7])
+        self.assertEqual(
+            package["analysis"],
+            {"hardcoded_value_count": 1, "hardcoded_field_count": 1},
+        )
+
+    def test_bindings_follow_generated_limit_offset_order(self) -> None:
+        package = prepare_statement(
+            "SELECT n FROM numbers WHERE kind = ? LIMIT ?, ?",
+            bindings=["prime", 2, 3],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(
+            package["sql"],
+            "SELECT n FROM numbers WHERE kind = ? LIMIT ? OFFSET ?",
+        )
+        self.assertEqual(package["bindings"], ["prime", 3, 2])
+
+    def test_cte_bindings_follow_generated_sql_not_ast_walk_order(self) -> None:
+        package = prepare_statement(
+            """
+            WITH selected AS (
+                SELECT * FROM jobs WHERE tenant = ?
+            )
+            SELECT * FROM selected WHERE state = ?
+            """,
+            bindings=[7, "open"],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(package["bindings"], [7, "open"])
+        self.assertLess(
+            package["sql"].index("tenant = ?"), package["sql"].index("state = ?")
+        )
+
+    def test_caller_binding_count_must_match_input_placeholders(self) -> None:
+        cases = [
+            ("SELECT * FROM people WHERE id = ?", None),
+            ("SELECT * FROM people WHERE id = ?", []),
+            ("SELECT * FROM people", [1]),
+            ("SELECT * FROM people WHERE id = ?", [1, 2]),
+        ]
+        for sql, bindings in cases:
             with (
-                self.subTest(placeholder=placeholder),
-                self.assertRaises(ExistingPlaceholderError),
+                self.subTest(sql=sql, bindings=bindings),
+                self.assertRaises(BindingCountError),
             ):
                 prepare_statement(
-                    f"SELECT * FROM people WHERE category = {placeholder}",
+                    sql,
+                    bindings=bindings,
                     source_dialect="sqlite",
                     target_dialect="sqlite",
                 )
@@ -191,6 +311,17 @@ class StatementApiTests(unittest.TestCase):
 
         self.assertEqual(package["bindings"], [1])
         self.assertIn("'$category'", package["sql"])
+
+    def test_question_marks_in_strings_and_comments_are_not_placeholders(self) -> None:
+        package = prepare_statement(
+            "SELECT '?' AS marker FROM people WHERE id = ? -- ? ignored",
+            bindings=[7],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(package["bindings"], [7])
+        self.assertIn("'?' AS marker", package["sql"])
 
     def test_multiple_statements_are_rejected(self) -> None:
         with self.assertRaises(StatementPreparationError):
@@ -222,7 +353,11 @@ class StatementApiTests(unittest.TestCase):
 
     def test_postgres_target_uses_sqlglot_postgres_placeholder(self) -> None:
         package = prepare_statement(
-            "SELECT * FROM main.people WHERE category = 'sales'",
+            """
+            SELECT * FROM main.people
+            WHERE category = ? AND status = 'active'
+            """,
+            bindings=["sales"],
             source_dialect="sqlite",
             target_dialect="postgres",
         )
@@ -230,9 +365,37 @@ class StatementApiTests(unittest.TestCase):
         self.assertEqual(package["dialect"], "sqlite,postgres")
         self.assertEqual(
             package["sql"],
-            "SELECT * FROM main.people WHERE category = %s",
+            "SELECT * FROM main.people WHERE category = %s AND status = %s",
         )
-        self.assertEqual(package["bindings"], ["sales"])
+        self.assertEqual(package["bindings"], ["sales", "active"])
+
+    def test_caller_decimal_is_preserved_for_postgres_target(self) -> None:
+        value = Decimal("1234567890.123456789")
+        package = prepare_statement(
+            "SELECT * FROM readings WHERE value = ?",
+            bindings=[value],
+            source_dialect="sqlite",
+            target_dialect="postgres",
+        )
+
+        self.assertEqual(package["bindings"], [value])
+
+    def test_postgres_numeric_placeholders_become_ordered_sqlite_bindings(self) -> None:
+        package = prepare_statement(
+            """
+            SELECT * FROM jobs
+            WHERE tenant = $1 AND state = $2
+            """,
+            bindings=[7, "open"],
+            source_dialect="postgres",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(
+            package["sql"],
+            "SELECT * FROM jobs WHERE tenant = ? AND state = ?",
+        )
+        self.assertEqual(package["bindings"], [7, "open"])
 
     def test_database_qualified_fields_remain_distinct(self) -> None:
         package = prepare_statement(
@@ -260,21 +423,29 @@ class SqliteConsumerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             report = run_demo(Path(directory) / "demo.sqlite3")
 
-        self.assertEqual(report["package"]["bindings"], ["sales"])
-        self.assertEqual([row[1] for row in report["rows"]], ["North", "West"])
+        self.assertEqual(report["hardcoded"]["package"]["bindings"], ["sales"])
+        self.assertEqual(report["parameterized"]["package"]["bindings"], ["sales"])
+        self.assertEqual(report["hardcoded"]["rows"], report["parameterized"]["rows"])
+        self.assertEqual(
+            [row[1] for row in report["parameterized"]["rows"]],
+            ["North", "West"],
+        )
 
     def test_all_supported_statements_execute_from_the_same_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "demo.sqlite3"
             create_demo_database(database)
-            statements = [
-                """
-                INSERT INTO big_table (name, value, category, created_at)
-                VALUES ('East', 40, 'sales', '2026-08-30')
-                """,
-                "UPDATE big_table SET value = 41 WHERE name = 'East'",
-                "DELETE FROM big_table WHERE name = 'South'",
-                "SELECT name, value FROM big_table WHERE category = 'sales'",
+            calls = [
+                (
+                    """
+                    INSERT INTO big_table (name, value, category, created_at)
+                    VALUES (?, 40, 'sales', '2026-08-30')
+                    """,
+                    ["East"],
+                ),
+                ("UPDATE big_table SET value = ? WHERE name = 'East'", [41]),
+                ("DELETE FROM big_table WHERE name = ?", ["South"]),
+                ("SELECT name, value FROM big_table WHERE category = ?", ["sales"]),
             ]
 
             with sqlite3.connect(database) as connection:
@@ -283,11 +454,12 @@ class SqliteConsumerTests(unittest.TestCase):
                         connection,
                         prepare_statement(
                             sql,
+                            bindings=bindings,
                             source_dialect="sqlite",
                             target_dialect="sqlite",
                         ),
                     )
-                    for sql in statements
+                    for sql, bindings in calls
                 ]
 
         self.assertEqual(results[-1], [("North", 10), ("West", 30), ("East", 41)])
@@ -296,7 +468,8 @@ class SqliteConsumerTests(unittest.TestCase):
         with sqlite3.connect(":memory:") as connection:
             connection.execute("CREATE TABLE readings (value REAL)")
             package = prepare_statement(
-                "INSERT INTO readings (value) VALUES (1.5)",
+                "INSERT INTO readings (value) VALUES (?)",
+                bindings=[Decimal("1.5")],
                 source_dialect="sqlite",
                 target_dialect="sqlite",
             )
@@ -305,6 +478,28 @@ class SqliteConsumerTests(unittest.TestCase):
 
         self.assertEqual(package["bindings"], [1.5])
         self.assertEqual(value, 1.5)
+
+    def test_reordered_limit_bindings_execute_with_original_meaning(self) -> None:
+        source_sql = "SELECT n FROM numbers WHERE kind = ? LIMIT ?, ?"
+        source_bindings = ["all", 2, 3]
+        package = prepare_statement(
+            source_sql,
+            bindings=source_bindings,
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        with sqlite3.connect(":memory:") as connection:
+            connection.execute("CREATE TABLE numbers (n INTEGER, kind TEXT)")
+            connection.executemany(
+                "INSERT INTO numbers VALUES (?, 'all')",
+                [(number,) for number in range(10)],
+            )
+            direct_rows = connection.execute(source_sql, source_bindings).fetchall()
+            prepared_rows = execute_package(connection, package)
+
+        self.assertEqual(direct_rows, [(2,), (3,), (4,)])
+        self.assertEqual(prepared_rows, direct_rows)
 
     def test_verified_complex_query_matches_direct_sqlite_execution(self) -> None:
         project_root = Path(__file__).parents[1]

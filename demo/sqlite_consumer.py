@@ -10,9 +10,14 @@ from sqlglot_experiments import PreparedStatement, prepare_statement
 DEFAULT_DATABASE = Path("runtime/sqlite_consumer.sqlite3")
 
 
-class DemoReport(TypedDict):
+class DemoCase(TypedDict):
     package: PreparedStatement
     rows: list[tuple[Any, ...]]
+
+
+class DemoReport(TypedDict):
+    hardcoded: DemoCase
+    parameterized: DemoCase
 
 
 def create_demo_database(database: Path) -> None:
@@ -53,7 +58,7 @@ def execute_package(
 
 def run_demo(database: Path = DEFAULT_DATABASE) -> DemoReport:
     create_demo_database(database)
-    package = prepare_statement(
+    hardcoded_package = prepare_statement(
         """
         SELECT id, name, value, category, created_at
         FROM big_table
@@ -62,9 +67,26 @@ def run_demo(database: Path = DEFAULT_DATABASE) -> DemoReport:
         source_dialect="sqlite",
         target_dialect="sqlite",
     )
+    parameterized_package = prepare_statement(
+        """
+        SELECT id, name, value, category, created_at
+        FROM big_table
+        WHERE category = ?
+        """,
+        bindings=["sales"],
+        source_dialect="sqlite",
+        target_dialect="sqlite",
+    )
     with sqlite3.connect(database) as connection:
-        rows = execute_package(connection, package)
-    return {"package": package, "rows": rows}
+        hardcoded_rows = execute_package(connection, hardcoded_package)
+        parameterized_rows = execute_package(connection, parameterized_package)
+    return {
+        "hardcoded": {"package": hardcoded_package, "rows": hardcoded_rows},
+        "parameterized": {
+            "package": parameterized_package,
+            "rows": parameterized_rows,
+        },
+    }
 
 
 def main() -> None:

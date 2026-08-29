@@ -51,13 +51,10 @@ def plan_source_parameters(
     target_dialect: str,
 ) -> ParameterPlan:
     """Resolve source placeholders and bindings into reusable logical slots."""
-    lexical_parameters = _lexical_parameters(
+    slots, occurrences = source_parameter_structure(
         sql,
         source_dialect=source_dialect,
-    )
-    slots, occurrences = _allocate_slots(
-        lexical_parameters,
-        source_dialect=source_dialect,
+        target_dialect=target_dialect,
     )
     slot_values = _resolve_slot_values(
         slots,
@@ -70,6 +67,23 @@ def plan_source_parameters(
         occurrence_values=tuple(
             slot_values[occurrence.slot_number] for occurrence in occurrences
         ),
+    )
+
+
+def source_parameter_structure(
+    sql: str,
+    *,
+    source_dialect: str,
+    target_dialect: str,
+) -> tuple[tuple[ParameterSlot, ...], tuple[ParameterOccurrence, ...]]:
+    """Return source parameter slots and occurrences without resolving values."""
+    lexical_parameters = _lexical_parameters(
+        sql,
+        source_dialect=source_dialect,
+    )
+    return _allocate_slots(
+        lexical_parameters,
+        source_dialect=source_dialect,
     )
 
 

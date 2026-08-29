@@ -65,7 +65,7 @@ class StatementApiTests(unittest.TestCase):
                 "success": True,
                 "warnings": True,
                 "msg": "warnings: replaced 1 hardcoded value with placeholder",
-                "dialect": "sqlite,sqlite",
+                "dialect": ["sqlite", "sqlite"],
                 "statement_type": "SELECT",
                 "sql": (
                     "SELECT id, name, value, category, created_at "
@@ -228,7 +228,7 @@ class StatementApiTests(unittest.TestCase):
                 "success": True,
                 "warnings": False,
                 "msg": "success: ok",
-                "dialect": "sqlite,sqlite",
+                "dialect": ["sqlite", "sqlite"],
                 "statement_type": "SELECT",
                 "sql": "SELECT * FROM orders WHERE category = ?",
                 "bindings": ["sales"],
@@ -635,7 +635,7 @@ class StatementApiTests(unittest.TestCase):
             target_dialect="postgres",
         )
 
-        self.assertEqual(package["dialect"], "sqlite,postgres")
+        self.assertEqual(package["dialect"], ["sqlite", "postgres"])
         self.assertEqual(
             package["sql"],
             "SELECT * FROM main.people WHERE category = %s AND status = %s",
@@ -733,7 +733,7 @@ class StatementApiTests(unittest.TestCase):
             target_dialect="mysql",
         )
 
-        self.assertEqual(package["dialect"], "mysql,mysql")
+        self.assertEqual(package["dialect"], ["mysql", "mysql"])
         self.assertEqual(package["bindings"], ["open", "closed"])
         self.assertEqual(package["analysis"]["hardcoded_field_count"], 2)
         self.assertIn("live.orders.status = ?", package["sql"])

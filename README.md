@@ -22,7 +22,7 @@ successful hardcoded-value replacement returns:
     "success": True,
     "warnings": True,
     "msg": "warnings: replaced 1 hardcoded value with placeholder",
-    "dialect": "sqlite,sqlite",
+    "dialect": ["sqlite", "sqlite"],
     "statement_type": "SELECT",
     "sql": "SELECT * FROM orders WHERE category = ?",
     "bindings": ["sales"],
@@ -43,11 +43,16 @@ already-parameterized inputs converge to the same package shape. The demo
 consumer deliberately owns database execution; the library does not connect to
 a database.
 
+Internal statement fingerprinting now produces a value-independent SHA-256 for
+`SELECT`, `INSERT`, `UPDATE`, and `DELETE` without changing the public API. Its
+source-to-target dialect route remains part of the fingerprint identity.
+
 ## Design notes
 
 - [Public API envelope](docs/API_ENVELOPE.md)
 - [AST source and target](docs/AST_SOURCE_TARGET.md)
 - [Statement API contract](docs/STATEMENT_API.md)
+- [Internal statement fingerprinting](docs/STATEMENT_FINGERPRINTING.md)
 
 ## Run
 

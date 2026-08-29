@@ -21,7 +21,7 @@ compact, execution-complete package:
     "success": True,
     "warnings": True,
     "msg": "warnings: replaced 1 hardcoded value with placeholder",
-    "dialect": "sqlite,sqlite",
+    "dialect": ["sqlite", "sqlite"],
     "statement_type": "SELECT",
     "sql": "SELECT * FROM orders WHERE category = ?",
     "bindings": ["sales"],
@@ -47,6 +47,8 @@ Returned bindings are native Python values in generated-target-placeholder
 order. This may differ from source order when SQLGlot rewrites a construct; for
 example, SQLite `LIMIT ?, ?` becomes `LIMIT ? OFFSET ?`, and the corresponding
 values are reordered with it.
+
+`dialect` is always the ordered `[source, target]` pair.
 
 `hardcoded_value_count` counts replaced occurrences and
 `hardcoded_field_count` counts their distinct AST-associated fields. These

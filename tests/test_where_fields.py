@@ -41,10 +41,22 @@ class WhereFieldsTests(unittest.TestCase):
             ],
         )
 
-    def test_unqualified_fields_are_not_guessed(self) -> None:
+    def test_unqualified_fields_resolve_against_one_physical_source(self) -> None:
         self.assertEqual(
             where_fields("SELECT * FROM people WHERE id = 1 AND status = 'active'"),
-            [],
+            [
+                {"database": None, "table": "people", "field": "id"},
+                {"database": None, "table": "people", "field": "status"},
+            ],
+        )
+
+    def test_unqualified_field_with_multiple_sources_has_unknown_table(self) -> None:
+        self.assertEqual(
+            where_fields(
+                "SELECT * FROM people AS p JOIN orders AS o ON o.person_id = p.id "
+                "WHERE status = 'active'"
+            ),
+            [{"database": None, "table": None, "field": "status"}],
         )
 
     def test_nested_correlated_fields_resolve_inner_and_outer_aliases(self) -> None:
@@ -65,7 +77,30 @@ class WhereFieldsTests(unittest.TestCase):
             ],
         )
 
-    def test_derived_alias_is_omitted_but_its_physical_inner_field_remains(self) -> None:
+    def test_unqualified_field_in_correlatable_subquery_is_retained(self) -> None:
+        self.assertEqual(
+            where_fields(
+                """
+                SELECT * FROM customers AS c
+                WHERE EXISTS (
+                    SELECT 1 FROM orders AS o
+                    WHERE customer_id = c.customer_id
+                )
+                """
+            ),
+            [
+                {"database": None, "table": None, "field": "customer_id"},
+                {"database": None, "table": "customers", "field": "customer_id"},
+            ],
+        )
+
+    def test_field_without_any_source_is_retained(self) -> None:
+        self.assertEqual(
+            where_fields("SELECT 1 WHERE mystery = 1"),
+            [{"database": None, "table": None, "field": "mystery"}],
+        )
+
+    def test_derived_alias_field_is_retained_with_unknown_physical_table(self) -> None:
         self.assertEqual(
             where_fields(
                 """
@@ -76,7 +111,10 @@ class WhereFieldsTests(unittest.TestCase):
                 WHERE filtered.id = 1
                 """
             ),
-            [{"database": None, "table": "people", "field": "active"}],
+            [
+                {"database": None, "table": None, "field": "id"},
+                {"database": None, "table": "people", "field": "active"},
+            ],
         )
 
     def test_repeated_physical_field_is_returned_once(self) -> None:
@@ -98,6 +136,18 @@ class WhereFieldsTests(unittest.TestCase):
         cases = (
             "UPDATE people AS p SET active = 0 WHERE p.id = 1",
             "DELETE FROM people AS p WHERE p.id = 1",
+        )
+        for sql in cases:
+            with self.subTest(sql=sql):
+                self.assertEqual(
+                    where_fields(sql),
+                    [{"database": None, "table": "people", "field": "id"}],
+                )
+
+    def test_unqualified_update_and_delete_targets_are_resolved(self) -> None:
+        cases = (
+            "UPDATE people SET active = 0 WHERE id = 1",
+            "DELETE FROM people WHERE id = 1",
         )
         for sql in cases:
             with self.subTest(sql=sql):

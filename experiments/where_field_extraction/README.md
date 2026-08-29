@@ -84,8 +84,9 @@ identity.
 
 ## Production decision
 
-Only the experiment's `observed` subset was promoted to the public
-`prepare_statement` success payload as `where_fields`. Inferred and unresolved
-occurrences are omitted, so every returned item has a proven physical table.
-An absent database remains `None`. This intentionally makes an empty array mean
-"no reliably resolved qualified fields", not "no WHERE clause".
+Every distinct field was promoted to the public `prepare_statement` success
+payload as `where_fields`. Observed physical sources are retained, and the
+narrow single-direct-source case is resolved for unqualified fields. Ambiguous,
+correlatable, derived, and unresolved ownership remains visible with `table` as
+`None`; those fields are never omitted. An absent database likewise remains
+`None`.

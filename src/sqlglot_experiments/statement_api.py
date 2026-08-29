@@ -24,7 +24,7 @@ from sqlglot_experiments.source_parameters import (
 from sqlglot_experiments.statement_fingerprinting import fingerprint_statement
 from sqlglot_experiments.where_fields import (
     WhereField,
-    extract_qualified_where_fields,
+    extract_where_fields,
 )
 
 StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE"]
@@ -207,7 +207,7 @@ def _prepare_statement(
         source_dialect=source_dialect,
         target_dialect=source_dialect,
     )
-    where_fields = extract_qualified_where_fields(source_ast)
+    where_fields = extract_where_fields(source_ast)
     _require_owned_placeholders(
         source_ast,
         marker_values=marker_values,

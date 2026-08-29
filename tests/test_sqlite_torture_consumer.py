@@ -147,7 +147,7 @@ class SqliteTortureConsumerTests(unittest.TestCase):
         self.assertEqual(result["status"], "equivalent")
         self.assertEqual(result["package"]["bindings"], [401, "named"])
 
-    def test_qualified_where_fields_remain_stable_across_the_corpus(self) -> None:
+    def test_where_fields_remain_stable_across_the_corpus(self) -> None:
         packages = [
             result["package"]
             for result in self.report["results"]
@@ -156,12 +156,13 @@ class SqliteTortureConsumerTests(unittest.TestCase):
         fields = [field for package in packages for field in package["where_fields"]]
 
         self.assertEqual(len(packages), 587)
-        self.assertEqual(len(fields), 222)
-        self.assertEqual(sum(bool(package["where_fields"]) for package in packages), 83)
+        self.assertEqual(len(fields), 559)
+        self.assertEqual(sum(bool(package["where_fields"]) for package in packages), 320)
+        self.assertEqual(sum(field["table"] is not None for field in fields), 494)
+        self.assertEqual(sum(field["table"] is None for field in fields), 65)
         self.assertTrue(
             all(
                 set(field) == {"database", "table", "field"}
-                and field["table"]
                 and field["field"]
                 for field in fields
             )

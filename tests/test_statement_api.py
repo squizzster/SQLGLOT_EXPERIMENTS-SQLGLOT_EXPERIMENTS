@@ -78,7 +78,13 @@ class StatementApiTests(unittest.TestCase):
                     "FROM big_table WHERE category = ?"
                 ),
                 "bindings": ["sales"],
-                "where_fields": [],
+                "where_fields": [
+                    {
+                        "database": None,
+                        "table": "big_table",
+                        "field": "category",
+                    }
+                ],
                 "analysis": {
                     "hardcoded_value_count": 1,
                     "hardcoded_field_count": 1,
@@ -241,7 +247,13 @@ class StatementApiTests(unittest.TestCase):
                 "statement_type": "SELECT",
                 "sql": "SELECT * FROM orders WHERE category = ?",
                 "bindings": ["sales"],
-                "where_fields": [],
+                "where_fields": [
+                    {
+                        "database": None,
+                        "table": "orders",
+                        "field": "category",
+                    }
+                ],
                 "analysis": {
                     "hardcoded_value_count": 0,
                     "hardcoded_field_count": 0,

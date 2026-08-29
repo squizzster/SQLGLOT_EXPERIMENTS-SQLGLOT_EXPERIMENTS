@@ -15,10 +15,8 @@ it never means a dialect-free universal AST.
 ```text
 SQLText(sqlite)
 → SQLGlotAST(sqlite)
-→ SQLGlotAST(postgres)
 → SQLText(postgres)
 → SQLGlotAST(postgres)
-→ SQLGlotAST(sqlite)
 → SQLText(sqlite)
 ```
 
@@ -28,6 +26,7 @@ Rules:
 - Parse: source SQL dialect and target AST semantics are explicit.
 - Transform: source and target dialect semantics are explicit on every call.
 - Generate: source AST semantics and target SQL dialect are explicit.
+- Reparse generated SQL as target dialect before returning it.
 - Transform a copy; retain the source AST.
 - Never reuse a target-prepared AST for a different target.
 - SQLGlot parsing or generation is not target-engine validation.

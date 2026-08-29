@@ -4,15 +4,16 @@
 prepare_statement(
     sql: str,
     *,
-    bindings: Sequence[object] | None = None,
+    bindings: Sequence[object] | Mapping[str, object] | None = None,
     source_dialect: str,
     target_dialect: str,
 ) -> PreparedStatement
 ```
 
 Both dialects are required. `bindings` is omitted when the input has no
-placeholders; otherwise it contains one value for each placeholder occurrence in
-source SQL order. The function returns one compact, execution-complete package:
+placeholders. Otherwise it resolves values through the declared source
+dialect's logical parameter slots. The function returns one compact,
+execution-complete package:
 
 ```python
 {
@@ -41,8 +42,13 @@ not name the fields.
 
 Missing or extra caller bindings raise `BindingCountError`; a successful return
 therefore always contains every binding needed by its generated SQL. Repeated
-named placeholders still take one input value per occurrence because Brick 1's
-input contract is ordered rather than driver-specific.
+source slots reuse one input value and expand into generated-target-placeholder
+order when necessary.
+
+SQLite accepts sequences for native slot numbering and mappings for named
+parameters. This covers `?`, `?NNN`, `:name`, `@name`, `$name`, repeated names,
+and numbered gaps. PostgreSQL `$N` parameters use numeric slots and ordered
+sequence bindings; mappings are not inferred.
 
 ## Prototype scope
 
@@ -56,11 +62,12 @@ The AST transform currently lifts direct constants from:
 
 Projection constants, `LIMIT`, JSON paths, function configuration arguments,
 typed or wrapped constants, computed assignments, and `IS NULL` remain in the
-SQL. SQLite's `?`, `?NNN`, `:name`, `@name`, `$name`, and `$1` forms and
-PostgreSQL numeric parameters are accepted and normalized. Driver-only template
-markers outside the SQLGlot dialect contract are not adapted here.
+SQL. Driver-only template markers outside the declared SQLGlot dialect contract
+are not adapted here. Compact PostgreSQL `$N` parameters without token
+separation and SQLite's extended Tcl-style parameter names remain unsupported.
 
-The SQLite target is execution-tested with Python's `sqlite3` driver. Other
-targets use SQLGlot's target rendering, including its placeholder spelling; that
-is not target-engine validation. Brick 1 owns analysis and preparation only; a
-later pipeline brick owns database execution.
+The SQLite target is execution-tested with Python's `sqlite3` driver, including
+same-dialect cast affinity and partial-index predicates. Other targets use
+SQLGlot's target rendering, including its placeholder spelling; that is not
+target-engine validation. Brick 1 owns analysis and preparation only; a later
+pipeline brick owns database execution.

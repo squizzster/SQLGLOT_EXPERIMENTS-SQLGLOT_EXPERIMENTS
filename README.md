@@ -12,9 +12,10 @@ checks, and explicit limitations while breaking changes remain expected.
 ## Current state
 
 `prepare_statement` accepts exactly one `SELECT`, `INSERT`, `UPDATE`, or
-`DELETE`, optional ordered caller bindings, and explicit source and target
-dialects. It preserves supplied values, lifts direct field-associated literals,
-and returns one execution-complete package:
+`DELETE`, optional source-native sequence or mapping bindings, and explicit
+source and target dialects. It resolves logical source parameter slots,
+preserves supplied values, lifts direct field-associated literals, and returns
+one execution-complete package:
 
 ```python
 {
@@ -29,10 +30,11 @@ and returns one execution-complete package:
 }
 ```
 
-SQLite execution is verified for all four statement types and for the retained
-complex fixture. Hardcoded and already-parameterized inputs converge to the same
-package shape. The demo consumer deliberately owns database execution; the
-library does not connect to a database.
+SQLite execution is verified for all four statement types, the retained complex
+fixture, and 590 torture cases with no genuine failures. Hardcoded and
+already-parameterized inputs converge to the same package shape. The demo
+consumer deliberately owns database execution; the library does not connect to
+a database.
 
 ## Design notes
 
@@ -44,6 +46,7 @@ library does not connect to a database.
 ```bash
 uv sync
 uv run python demo/sqlite_consumer.py
+uv run python demo/sqlite_torture_consumer.py
 uv run python -m unittest discover -v
 uvx ruff check src/sqlglot_experiments demo tests
 uv run --with pyright pyright src/sqlglot_experiments demo tests

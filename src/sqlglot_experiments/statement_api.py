@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from decimal import Decimal
 from typing import Literal, TypedDict, cast
 
-from sqlglot import Dialect, ErrorLevel, exp, parse
-from sqlglot.tokenizer_core import Token, TokenType
+from sqlglot import Dialect, exp, parse
 
-Binding = object
+from sqlglot_experiments.dialect_adapters import generate_target_sql, parsing_dialect
+from sqlglot_experiments.source_parameters import (
+    Binding,
+    InputBindings,
+    ParameterPlan,
+    ParameterPlanningError,
+    plan_source_parameters,
+)
+
 StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE"]
 
 
@@ -29,7 +35,7 @@ class StatementPreparationError(ValueError):
 
 
 class BindingCountError(StatementPreparationError):
-    """Caller bindings do not match the placeholders in the SQL."""
+    """Caller bindings cannot resolve every required source parameter slot."""
 
 
 class UnsupportedStatementError(StatementPreparationError):
@@ -57,17 +63,25 @@ _DIRECT_PREDICATES = (
 def prepare_statement(
     sql: str,
     *,
-    bindings: Sequence[Binding] | None = None,
+    bindings: InputBindings | None = None,
     source_dialect: str,
     target_dialect: str,
 ) -> PreparedStatement:
     """Return target SQL and every binding required to execute it."""
     source_dialect = _require_dialect(source_dialect, role="source")
     target_dialect = _require_dialect(target_dialect, role="target")
-    caller_bindings = _copy_caller_bindings(bindings)
+    try:
+        parameter_plan = plan_source_parameters(
+            sql,
+            bindings=bindings,
+            source_dialect=source_dialect,
+            target_dialect=target_dialect,
+        )
+    except ParameterPlanningError as error:
+        raise BindingCountError(str(error)) from error
     source_sql, marker_values = _tag_source_placeholders(
         sql,
-        caller_bindings=caller_bindings,
+        parameter_plan=parameter_plan,
         source_dialect=source_dialect,
         target_dialect=target_dialect,
     )
@@ -110,13 +124,33 @@ def prepare_statement(
     )
     _require_complete_ast(
         prepared_ast,
-        bindings=merged_bindings,
+        bindings=list(marker_values.values()),
         source_dialect=source_dialect,
         target_dialect=target_dialect,
     )
     target_sql = _generate_sql(
         prepared_ast,
         source_dialect=source_dialect,
+        target_dialect=target_dialect,
+    )
+    target_ast = _parse_single_statement(
+        target_sql,
+        source_dialect=target_dialect,
+        target_dialect=target_dialect,
+    )
+    target_statement_type = _statement_type(
+        target_ast,
+        source_dialect=target_dialect,
+        target_dialect=target_dialect,
+    )
+    if target_statement_type != statement_type:
+        raise StatementPreparationError(
+            "target rendering changed the SQL statement type"
+        )
+    _require_complete_ast(
+        target_ast,
+        bindings=merged_bindings,
+        source_dialect=target_dialect,
         target_dialect=target_dialect,
     )
 
@@ -146,9 +180,13 @@ def _parse_single_statement(
     source_dialect: str,
     target_dialect: str,
 ) -> exp.Expr:
+    read_dialect = parsing_dialect(
+        source_dialect=source_dialect,
+        target_dialect=target_dialect,
+    )
     statements = [
         cast(exp.Expr, statement)
-        for statement in parse(sql, read=source_dialect)
+        for statement in parse(sql, read=read_dialect)
         if statement
     ]
     if len(statements) != 1:
@@ -177,92 +215,37 @@ def _statement_type(
     )
 
 
-def _copy_caller_bindings(
-    bindings: Sequence[Binding] | None,
-) -> list[Binding]:
-    if bindings is None:
-        return []
-    if isinstance(bindings, (str, bytes, bytearray, memoryview)):
-        raise BindingCountError("bindings must be an ordered sequence of values")
-    return list(bindings)
-
-
 def _tag_source_placeholders(
     sql: str,
     *,
-    caller_bindings: list[Binding],
+    parameter_plan: ParameterPlan,
     source_dialect: str,
     target_dialect: str,
 ) -> tuple[str, dict[str, Binding]]:
-    tokens = Dialect.get_or_raise(source_dialect).tokenize(sql)
-    spans = _placeholder_spans(
-        tokens,
-        source_dialect=source_dialect,
-        target_dialect=target_dialect,
-    )
-    if len(spans) != len(caller_bindings):
-        raise BindingCountError(
-            f"statement requires {len(spans)} caller binding(s), "
-            f"received {len(caller_bindings)}"
-        )
-
     marker_prefix = _unused_marker_prefix(sql, kind="input")
     marker_values: dict[str, Binding] = {}
+    target_slot_values: dict[int, Binding] = {}
     parts: list[str] = []
     cursor = 0
-    for index, (start, end) in enumerate(spans):
-        marker = f"{marker_prefix}{index}"
-        marker_values[marker] = _target_binding_value(
-            caller_bindings[index],
-            source_dialect=source_dialect,
-            target_dialect=target_dialect,
+    for index, (occurrence, value) in enumerate(
+        zip(
+            parameter_plan.occurrences,
+            parameter_plan.occurrence_values,
+            strict=True,
         )
-        parts.extend((sql[cursor:start], f":{marker}"))
-        cursor = end + 1
+    ):
+        marker = f"{marker_prefix}{index}"
+        if occurrence.slot_number not in target_slot_values:
+            target_slot_values[occurrence.slot_number] = _target_binding_value(
+                value,
+                source_dialect=source_dialect,
+                target_dialect=target_dialect,
+            )
+        marker_values[marker] = target_slot_values[occurrence.slot_number]
+        parts.extend((sql[cursor : occurrence.start], f":{marker}"))
+        cursor = occurrence.end + 1
     parts.append(sql[cursor:])
     return "".join(parts), marker_values
-
-
-def _placeholder_spans(
-    tokens: list[Token],
-    *,
-    source_dialect: str,
-    target_dialect: str,
-) -> list[tuple[int, int]]:
-    spans: list[tuple[int, int]] = []
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        following = tokens[index + 1] if index + 1 < len(tokens) else None
-
-        if token.token_type is TokenType.PLACEHOLDER:
-            if (
-                source_dialect == "sqlite"
-                and following is not None
-                and following.start == token.end + 1
-                and following.token_type is TokenType.NUMBER
-            ):
-                spans.append((token.start, following.end))
-                index += 2
-                continue
-            spans.append((token.start, token.end))
-        elif (
-            token.token_type in {TokenType.COLON, TokenType.PARAMETER}
-            and following is not None
-            and following.start == token.end + 1
-            and following.token_type in {TokenType.VAR, TokenType.NUMBER}
-        ):
-            spans.append((token.start, following.end))
-            index += 2
-            continue
-        elif (
-            source_dialect == "sqlite"
-            and token.token_type is TokenType.VAR
-            and token.text.startswith("$")
-        ):
-            spans.append((token.start, token.end))
-        index += 1
-    return spans
 
 
 def _unused_marker_prefix(sql: str, *, kind: str) -> str:
@@ -343,7 +326,7 @@ def _bindings_in_target_order(
         for token in Dialect.get_or_raise(target_dialect).tokenize(marked_sql)
         if token.text in marker_values
     ]
-    if len(marker_order) != len(marker_values):
+    if set(marker_order) != set(marker_values):
         raise StatementPreparationError("target rendering lost a binding marker")
     return [marker_values[marker] for marker in marker_order]
 
@@ -549,7 +532,8 @@ def _generate_sql(
     source_dialect: str,
     target_dialect: str,
 ) -> str:
-    return statement.sql(
-        dialect=target_dialect,
-        unsupported_level=ErrorLevel.RAISE,
+    return generate_target_sql(
+        statement,
+        source_dialect=source_dialect,
+        target_dialect=target_dialect,
     )

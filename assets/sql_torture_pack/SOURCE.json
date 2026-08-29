@@ -1,0 +1,15 @@
+{
+  "name": "SQL Torture Pack",
+  "version": "1.0.0",
+  "supplied_archive": "/tmp/sql_torture_pack.zip",
+  "archive_sha256": "9a13d045a3c7fa667294998e0b0b5a3f64b4091b321011727691fe00fb657a8c",
+  "retained_files": {
+    "cases.json.gz": {
+      "sha256": "9211b6f91d751e40b2a617d33535804a25ef0e4c51435f61be5b5ba367a11e4f",
+      "uncompressed_sha256": "5ca9bca2fd29b73504608109980b5df7b8242ba5ffe7b0febd8b1508c9695f65"
+    },
+    "fixture.sqlite": {
+      "sha256": "dd7c8326c053eb9920d98508db65d638e1b0fdc32f4a86750eaa9484c2197dfe"
+    }
+  }
+}

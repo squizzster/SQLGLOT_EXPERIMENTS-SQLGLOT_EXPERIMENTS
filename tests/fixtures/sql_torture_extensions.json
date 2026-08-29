@@ -1,0 +1,105 @@
+{
+  "format": "sqlglot-experiments.torture-extensions.v1",
+  "cases": [
+    {
+      "name": "local.select.fixed",
+      "pair": "select",
+      "sql": "SELECT row_id, payload FROM set_left WHERE join_key = 1 ORDER BY row_id",
+      "params": [],
+      "expected_rows": [[1, "duplicate"], [2, "duplicate"]],
+      "expected_types": [["integer", "text"], ["integer", "text"]],
+      "expected_columns": ["row_id", "payload"]
+    },
+    {
+      "name": "local.select.placeholder",
+      "pair": "select",
+      "sql": "SELECT row_id, payload FROM set_left WHERE join_key = ? ORDER BY row_id",
+      "params": [1],
+      "expected_rows": [[1, "duplicate"], [2, "duplicate"]],
+      "expected_types": [["integer", "text"], ["integer", "text"]],
+      "expected_columns": ["row_id", "payload"]
+    },
+    {
+      "name": "local.insert.fixed",
+      "pair": "insert",
+      "setup": [{"sql": "CREATE TEMP TABLE local_probe (id INTEGER PRIMARY KEY, label TEXT NOT NULL)", "params": []}],
+      "sql": "INSERT INTO local_probe (id, label) VALUES (101, 'inserted') RETURNING id, label",
+      "params": [],
+      "expected_rows": [[101, "inserted"]],
+      "expected_types": [["integer", "text"]],
+      "expected_columns": ["id", "label"]
+    },
+    {
+      "name": "local.insert.placeholder",
+      "pair": "insert",
+      "setup": [{"sql": "CREATE TEMP TABLE local_probe (id INTEGER PRIMARY KEY, label TEXT NOT NULL)", "params": []}],
+      "sql": "INSERT INTO local_probe (id, label) VALUES (?, ?) RETURNING id, label",
+      "params": [101, "inserted"],
+      "expected_rows": [[101, "inserted"]],
+      "expected_types": [["integer", "text"]],
+      "expected_columns": ["id", "label"]
+    },
+    {
+      "name": "local.update.fixed",
+      "pair": "update",
+      "setup": [
+        {"sql": "CREATE TEMP TABLE local_probe (id INTEGER PRIMARY KEY, label TEXT NOT NULL)", "params": []},
+        {"sql": "INSERT INTO local_probe VALUES (201, 'before')", "params": []}
+      ],
+      "sql": "UPDATE local_probe SET label = 'updated' WHERE id = 201 RETURNING id, label",
+      "params": [],
+      "expected_rows": [[201, "updated"]],
+      "expected_types": [["integer", "text"]],
+      "expected_columns": ["id", "label"]
+    },
+    {
+      "name": "local.update.placeholder",
+      "pair": "update",
+      "setup": [
+        {"sql": "CREATE TEMP TABLE local_probe (id INTEGER PRIMARY KEY, label TEXT NOT NULL)", "params": []},
+        {"sql": "INSERT INTO local_probe VALUES (201, 'before')", "params": []}
+      ],
+      "sql": "UPDATE local_probe SET label = ? WHERE id = ? RETURNING id, label",
+      "params": ["updated", 201],
+      "expected_rows": [[201, "updated"]],
+      "expected_types": [["integer", "text"]],
+      "expected_columns": ["id", "label"]
+    },
+    {
+      "name": "local.delete.fixed",
+      "pair": "delete",
+      "setup": [
+        {"sql": "CREATE TEMP TABLE local_probe (id INTEGER PRIMARY KEY, label TEXT NOT NULL)", "params": []},
+        {"sql": "INSERT INTO local_probe VALUES (301, 'deleted')", "params": []}
+      ],
+      "sql": "DELETE FROM local_probe WHERE id = 301 RETURNING id, label",
+      "params": [],
+      "expected_rows": [[301, "deleted"]],
+      "expected_types": [["integer", "text"]],
+      "expected_columns": ["id", "label"]
+    },
+    {
+      "name": "local.delete.placeholder",
+      "pair": "delete",
+      "setup": [
+        {"sql": "CREATE TEMP TABLE local_probe (id INTEGER PRIMARY KEY, label TEXT NOT NULL)", "params": []},
+        {"sql": "INSERT INTO local_probe VALUES (301, 'deleted')", "params": []}
+      ],
+      "sql": "DELETE FROM local_probe WHERE id = ? RETURNING id, label",
+      "params": [301],
+      "expected_rows": [[301, "deleted"]],
+      "expected_types": [["integer", "text"]],
+      "expected_columns": ["id", "label"]
+    },
+    {
+      "name": "local.insert.named_mapping",
+      "pair": "named_mapping",
+      "setup": [{"sql": "CREATE TEMP TABLE local_probe (id INTEGER PRIMARY KEY, label TEXT NOT NULL)", "params": []}],
+      "sql": "INSERT INTO local_probe (id, label) VALUES (:id, :label) RETURNING id, label",
+      "params": {"id": 401, "label": "named"},
+      "expected_rows": [[401, "named"]],
+      "expected_types": [["integer", "text"]],
+      "expected_columns": ["id", "label"]
+    }
+  ]
+}

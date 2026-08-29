@@ -4,11 +4,11 @@
 one `SELECT`, `INSERT`, `UPDATE`, or `DELETE`.
 
 - The caller supplies explicit source and target dialects.
-- Literal values and recognized placeholder spelling or identity are normalized
-  while statement structure and value-site count remain significant.
+- Bind values and SQLGlot-native placeholders are normalized while structural
+  literals, statement structure, and value-site count remain significant.
 - The normalized AST is rendered for the target and reparsed as that target.
-- SHA-256 covers the algorithm version, statement type, canonical SQL, source,
-  and target. The dialect route is therefore part of identity.
+- SHA-256 covers the algorithm and SQLGlot versions, statement type, canonical
+  SQL, source, and target. The dialect route is therefore part of identity.
 - Bindings are not required. Fingerprinting transforms a copied AST and does not
   affect `prepare_statement` or its warnings.
 

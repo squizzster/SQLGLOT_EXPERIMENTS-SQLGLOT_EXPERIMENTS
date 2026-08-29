@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
+from importlib.metadata import version
 from typing import Literal, cast
 
 from sqlglot import Dialect, exp, parse
@@ -17,6 +18,7 @@ from sqlglot_experiments.source_parameters import (
 StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE"]
 
 _ALGORITHM = "sqlglot-experiments/statement-fingerprint/v1"
+_CANONICALIZER = f"sqlglot/{version('sqlglot')}"
 
 
 class FingerprintingError(ValueError):
@@ -38,14 +40,22 @@ def fingerprint_statement(
             source_dialect=source_dialect,
             target_dialect=target_dialect,
         )
-        tagged_sql, owned_markers = _tag_source_parameters(sql, occurrences)
+        tagged_sql = _tag_source_parameters(sql, occurrences)
         source_ast = _parse_single(
             tagged_sql,
             source_dialect=source_dialect,
             target_dialect=target_dialect,
         )
-        statement_type = _statement_type(source_ast)
-        shape_ast = _normalize_value_sites(source_ast, owned_markers)
+        statement_type = _statement_type(
+            source_ast,
+            source_dialect=source_dialect,
+            target_dialect=target_dialect,
+        )
+        shape_ast = _normalize_value_sites(
+            source_ast,
+            source_dialect=source_dialect,
+            target_dialect=target_dialect,
+        )
         canonical_sql = generate_target_sql(
             shape_ast,
             source_dialect=source_dialect,
@@ -57,7 +67,14 @@ def fingerprint_statement(
             source_dialect=target_dialect,
             target_dialect=target_dialect,
         )
-        if _statement_type(target_ast) != statement_type:
+        if (
+            _statement_type(
+                target_ast,
+                source_dialect=target_dialect,
+                target_dialect=target_dialect,
+            )
+            != statement_type
+        ):
             raise FingerprintingError(
                 "target rendering changed the SQL statement type"
             )
@@ -67,6 +84,7 @@ def fingerprint_statement(
     payload = json.dumps(
         {
             "algorithm": _ALGORITHM,
+            "canonicalizer": _CANONICALIZER,
             "canonical_sql": canonical_sql,
             "source_dialect": source_dialect,
             "statement_type": statement_type,
@@ -92,21 +110,19 @@ def _require_dialect(dialect: str, *, role: str) -> str:
 def _tag_source_parameters(
     sql: str,
     occurrences: tuple[ParameterOccurrence, ...],
-) -> tuple[str, set[str]]:
+) -> str:
     marker_prefix = "__sqlglot_experiments_fingerprint_"
     while marker_prefix in sql:
         marker_prefix = f"_{marker_prefix}"
 
-    markers: set[str] = set()
     parts: list[str] = []
     cursor = 0
     for index, occurrence in enumerate(occurrences):
         marker = f"{marker_prefix}{index}"
-        markers.add(marker)
         parts.extend((sql[cursor : occurrence.start], f":{marker}"))
         cursor = occurrence.end + 1
     parts.append(sql[cursor:])
-    return "".join(parts), markers
+    return "".join(parts)
 
 
 def _parse_single(
@@ -131,7 +147,12 @@ def _parse_single(
     return statements[0]
 
 
-def _statement_type(statement: exp.Expr) -> StatementType:
+def _statement_type(
+    statement: exp.Expr,
+    *,
+    source_dialect: str,
+    target_dialect: str,
+) -> StatementType:
     if isinstance(statement, exp.Query):
         return "SELECT"
     if isinstance(statement, exp.Insert):
@@ -147,20 +168,20 @@ def _statement_type(statement: exp.Expr) -> StatementType:
 
 def _normalize_value_sites(
     source_ast: exp.Expr,
-    owned_markers: set[str],
+    *,
+    source_dialect: str,
+    target_dialect: str,
 ) -> exp.Expr:
     shape_ast = source_ast.copy()
     candidates: list[exp.Expr] = []
     for raw_node in shape_ast.walk(bfs=False):
         node = cast(exp.Expr, raw_node)
-        if isinstance(node, exp.Parameter):
-            raise FingerprintingError("unsupported source placeholder form")
-        if isinstance(node, exp.Placeholder):
-            marker = node.name
-            if marker not in owned_markers:
-                raise FingerprintingError("unsupported source placeholder form")
-            candidates.append(node)
-        elif _is_value_site(node, candidates):
+        if isinstance(node, (exp.Parameter, exp.Placeholder)) or _is_value_site(
+            node,
+            candidates,
+            source_dialect=source_dialect,
+            target_dialect=target_dialect,
+        ):
             candidates.append(node)
 
     for candidate in candidates:
@@ -168,9 +189,47 @@ def _normalize_value_sites(
     return shape_ast
 
 
-def _is_value_site(node: exp.Expr, candidates: list[exp.Expr]) -> bool:
+def _is_value_site(
+    node: exp.Expr,
+    candidates: list[exp.Expr],
+    *,
+    source_dialect: str,
+    target_dialect: str,
+) -> bool:
     if isinstance(node, exp.Neg) and isinstance(node.this, exp.Literal):
         return True
     if not isinstance(node, (exp.Literal, exp.Boolean, exp.Null)):
         return False
+    if _is_structural_literal(
+        node,
+        source_dialect=source_dialect,
+        target_dialect=target_dialect,
+    ):
+        return False
     return not (isinstance(node.parent, exp.Neg) and node.parent in candidates)
+
+
+def _is_structural_literal(
+    node: exp.Literal | exp.Boolean | exp.Null,
+    *,
+    source_dialect: str,
+    target_dialect: str,
+) -> bool:
+    """Keep literals whose AST role identifies SQL structure rather than data."""
+    if not isinstance(node, exp.Literal):
+        return False
+    if node.find_ancestor(exp.DataType) or isinstance(node.parent, exp.PositionalColumn):
+        return True
+    if not node.is_int:
+        return False
+
+    parent = node.parent
+    if isinstance(parent, exp.Ordered) and isinstance(parent.parent, exp.Order):
+        return True
+    if isinstance(parent, exp.Group) and node.arg_key == "expressions":
+        return True
+    return bool(
+        isinstance(parent, exp.Tuple)
+        and isinstance(parent.parent, exp.Distinct)
+        and parent.arg_key == "on"
+    )

@@ -107,6 +107,58 @@ class StatementFingerprintingTests(unittest.TestCase):
 
         self.assertEqual(len({self.fingerprint(sql) for sql in cases}), len(cases))
 
+    def test_structural_numeric_roles_remain_significant(self) -> None:
+        pairs = (
+            (
+                "sqlite",
+                "SELECT a, b FROM t ORDER BY 1",
+                "SELECT a, b FROM t ORDER BY 2",
+            ),
+            (
+                "sqlite",
+                "SELECT a, b FROM t GROUP BY 1",
+                "SELECT a, b FROM t GROUP BY 2",
+            ),
+            (
+                "sqlite",
+                "SELECT CAST(a AS DECIMAL(10, 2)) FROM t",
+                "SELECT CAST(a AS DECIMAL(18, 6)) FROM t",
+            ),
+            (
+                "postgres",
+                "SELECT DISTINCT ON (1) a, b FROM t",
+                "SELECT DISTINCT ON (2) a, b FROM t",
+            ),
+        )
+
+        for dialect, left, right in pairs:
+            with self.subTest(dialect=dialect, left=left, right=right):
+                self.assertNotEqual(
+                    self.fingerprint(left, source=dialect, target=dialect),
+                    self.fingerprint(right, source=dialect, target=dialect),
+                )
+
+    def test_sqlglot_native_placeholders_are_value_sites(self) -> None:
+        cases = (
+            (
+                "mysql",
+                "SELECT id FROM customers WHERE id = 42",
+                "SELECT id FROM customers WHERE id = ?",
+            ),
+            (
+                "bigquery",
+                "SELECT id FROM customers WHERE id = 42",
+                "SELECT id FROM customers WHERE id = @customer_id",
+            ),
+        )
+
+        for dialect, hardcoded, placeholder in cases:
+            with self.subTest(dialect=dialect):
+                self.assertEqual(
+                    self.fingerprint(hardcoded, source=dialect, target=dialect),
+                    self.fingerprint(placeholder, source=dialect, target=dialect),
+                )
+
     def test_value_site_count_remains_significant(self) -> None:
         self.assertNotEqual(
             self.fingerprint("SELECT id FROM customers WHERE id IN (1, 2)"),

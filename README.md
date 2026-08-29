@@ -12,11 +12,12 @@ useful adaptation, and repeat.
 ## Current state
 
 The Python 3.12 project baseline and SQLGlot dependency are installed and
-locked. No specific SQL experiment has been selected yet.
+locked. The first experiment exercises SQLGlot's native parser, lineage, and
+transpiler APIs directly against the verified SQLite source query.
 
 ## Run
 
 ```bash
 uv sync
-uv run sqlglot-experiments
+uv run python experiments/native_api_showcase.py
 ```

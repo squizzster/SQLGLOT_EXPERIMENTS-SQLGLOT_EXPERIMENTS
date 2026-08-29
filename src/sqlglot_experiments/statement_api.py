@@ -20,6 +20,7 @@ from sqlglot_experiments.source_parameters import (
     ParameterPlanningError,
     plan_source_parameters,
 )
+from sqlglot_experiments.statement_fingerprinting import fingerprint_statement
 
 StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE"]
 
@@ -30,6 +31,7 @@ class Analysis(TypedDict):
 
 
 class PreparedStatement(ApiSuccessEnvelope):
+    sql_fingerprint: str
     dialect: list[str]
     statement_type: StatementType
     sql: str
@@ -183,6 +185,11 @@ def _prepare_statement(
         source_dialect=target_dialect,
         target_dialect=target_dialect,
     )
+    sql_fingerprint = fingerprint_statement(
+        sql,
+        source_dialect=source_dialect,
+        target_dialect=target_dialect,
+    )
 
     status = success_envelope(
         warning=(
@@ -193,6 +200,7 @@ def _prepare_statement(
     )
     return {
         **status,
+        "sql_fingerprint": sql_fingerprint,
         "dialect": [source_dialect, target_dialect],
         "statement_type": statement_type,
         "sql": target_sql,

@@ -6,7 +6,7 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from demo.sqlite_consumer import create_demo_database, execute_package, run_demo
 from sqlglot_experiments import (
@@ -65,6 +65,7 @@ class StatementApiTests(unittest.TestCase):
                 "success": True,
                 "warnings": True,
                 "msg": "warnings: replaced 1 hardcoded value with placeholder",
+                "sql_fingerprint": ANY,
                 "dialect": ["sqlite", "sqlite"],
                 "statement_type": "SELECT",
                 "sql": (
@@ -78,6 +79,7 @@ class StatementApiTests(unittest.TestCase):
                 },
             },
         )
+        self.assertRegex(package["sql_fingerprint"], r"^[0-9a-f]{64}$")
 
     def test_insert_preserves_row_and_column_binding_order(self) -> None:
         package = prepare_statement(
@@ -228,6 +230,7 @@ class StatementApiTests(unittest.TestCase):
                 "success": True,
                 "warnings": False,
                 "msg": "success: ok",
+                "sql_fingerprint": ANY,
                 "dialect": ["sqlite", "sqlite"],
                 "statement_type": "SELECT",
                 "sql": "SELECT * FROM orders WHERE category = ?",
@@ -237,6 +240,27 @@ class StatementApiTests(unittest.TestCase):
                     "hardcoded_field_count": 0,
                 },
             },
+        )
+        self.assertRegex(package["sql_fingerprint"], r"^[0-9a-f]{64}$")
+
+    def test_fingerprint_converges_without_changing_warning_state(self) -> None:
+        hardcoded = prepare_statement(
+            "SELECT * FROM orders WHERE category = 'sales'",
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+        parameterized = prepare_statement(
+            "SELECT * FROM orders WHERE category = ?",
+            bindings=["sales"],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(hardcoded["sql_fingerprint"], parameterized["sql_fingerprint"])
+        self.assertEqual((hardcoded["success"], hardcoded["warnings"]), (True, True))
+        self.assertEqual(
+            (parameterized["success"], parameterized["warnings"]),
+            (True, False),
         )
 
     def test_sqlite_placeholder_forms_are_normalized_to_qmark(self) -> None:

@@ -11,14 +11,17 @@ checks, and explicit limitations while breaking changes remain expected.
 
 ## Current state
 
-`prepare_statement` accepts exactly one `SELECT`, `INSERT`, `UPDATE`, or
-`DELETE`, optional source-native sequence or mapping bindings, and explicit
-source and target dialects. It resolves logical source parameter slots,
-preserves supplied values, lifts direct field-associated literals, and returns
-one execution-complete package:
+`prepare_statement` is the library's first public API command. It accepts
+exactly one `SELECT`, `INSERT`, `UPDATE`, or `DELETE`, optional source-native
+sequence or mapping bindings, and explicit source and target dialects. Every
+return carries the standard `success`, `warnings`, and `msg` envelope. A
+successful hardcoded-value replacement returns:
 
 ```python
 {
+    "success": True,
+    "warnings": True,
+    "msg": "warnings: replaced 1 hardcoded value with placeholder",
     "dialect": "sqlite,sqlite",
     "statement_type": "SELECT",
     "sql": "SELECT * FROM orders WHERE category = ?",
@@ -30,6 +33,10 @@ one execution-complete package:
 }
 ```
 
+Failures contain only the standard envelope; they never contain fake executable
+SQL or bindings. Messages are owned by this library, single-line, and limited to
+240 characters.
+
 SQLite execution is verified for all four statement types, the retained complex
 fixture, and 590 torture cases with no genuine failures. Hardcoded and
 already-parameterized inputs converge to the same package shape. The demo
@@ -38,6 +45,7 @@ a database.
 
 ## Design notes
 
+- [Public API envelope](docs/API_ENVELOPE.md)
 - [AST source and target](docs/AST_SOURCE_TARGET.md)
 - [Statement API contract](docs/STATEMENT_API.md)
 

@@ -1,7 +1,7 @@
 from sqlglot_experiments.statement_api import (
     Analysis,
     Binding,
-    ExistingPlaceholderError,
+    BindingCountError,
     PreparedStatement,
     StatementPreparationError,
     StatementType,
@@ -12,7 +12,7 @@ from sqlglot_experiments.statement_api import (
 __all__ = [
     "Analysis",
     "Binding",
-    "ExistingPlaceholderError",
+    "BindingCountError",
     "PreparedStatement",
     "StatementPreparationError",
     "StatementType",

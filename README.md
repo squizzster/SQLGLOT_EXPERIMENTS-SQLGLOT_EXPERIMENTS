@@ -12,8 +12,9 @@ checks, and explicit limitations while breaking changes remain expected.
 ## Current state
 
 `prepare_statement` accepts exactly one `SELECT`, `INSERT`, `UPDATE`, or
-`DELETE` plus explicit source and target dialects. It uses the SQLGlot AST to
-lift direct field-associated literals into ordered bindings and returns:
+`DELETE`, optional ordered caller bindings, and explicit source and target
+dialects. It preserves supplied values, lifts direct field-associated literals,
+and returns one execution-complete package:
 
 ```python
 {
@@ -29,7 +30,8 @@ lift direct field-associated literals into ordered bindings and returns:
 ```
 
 SQLite execution is verified for all four statement types and for the retained
-complex fixture. The demo consumer deliberately owns database execution; the
+complex fixture. Hardcoded and already-parameterized inputs converge to the same
+package shape. The demo consumer deliberately owns database execution; the
 library does not connect to a database.
 
 ## Design notes

@@ -59,6 +59,12 @@ ownership the source AST proves. The field itself is never omitted. Across 587
 successful adversarial packages, 559 distinct WHERE fields were returned: 494
 qualified to a physical table and 65 retained as bare fields.
 
+Prepared SQL structures use a built-in 256-entry LRU per Python process.
+Normalized dialects, exact SQL, and binding names identify the structure;
+caller binding values remain outside the cache. Hits resolve the cached binding
+route with current values and return a fresh public envelope. Separate consumer
+processes therefore have separate caches.
+
 ## Design notes
 
 - [Public API envelope](docs/API_ENVELOPE.md)

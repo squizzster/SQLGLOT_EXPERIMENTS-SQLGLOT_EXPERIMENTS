@@ -122,6 +122,25 @@ therefore always contains every binding needed by its generated SQL. Repeated
 source slots reuse one input value and expand into generated-target-placeholder
 order when necessary.
 
+## Process-local structure cache
+
+Successful statement structures use Python's built-in 256-entry LRU cache. The
+cache is local to the Python process: callers in one process share it, separate
+consumer processes have independent caches, and a process restart clears it.
+
+The immutable cache key consists of the normalized source dialect, normalized
+target dialect, exact input SQL, and ordered source binding names. Anonymous
+slots receive structural names such as `#1`. Caller binding values never enter
+the cache key or cached structure. A cached entry retains the generated SQL,
+fingerprint, statement type, WHERE fields, analysis, status, and binding route.
+Each call resolves that route against its current binding values and returns a
+fresh envelope with fresh mutable containers.
+
+Malformed SQL, unsupported statements, and invalid binding calls are not
+retained as cache entries. Hardcoded literals remain part of the exact input
+SQL and its generated binding route. Cache behavior does not add fields to the
+public envelope.
+
 SQLite accepts sequences for native slot numbering and mappings for named
 parameters. This covers `?`, `?NNN`, `:name`, `@name`, `$name`, repeated names,
 and numbered gaps. PostgreSQL `$N` parameters use numeric slots and ordered

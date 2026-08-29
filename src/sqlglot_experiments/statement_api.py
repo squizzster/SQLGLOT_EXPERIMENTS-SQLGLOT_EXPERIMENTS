@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from decimal import Decimal
+from functools import lru_cache
 from typing import Literal, TypedDict, cast, overload
 
 from sqlglot import Dialect, exp, parse
@@ -20,6 +22,7 @@ from sqlglot_experiments.source_parameters import (
     ParameterPlan,
     ParameterPlanningError,
     plan_source_parameters,
+    source_parameter_structure,
 )
 from sqlglot_experiments.statement_fingerprinting import fingerprint_statement
 from sqlglot_experiments.where_fields import (
@@ -64,6 +67,25 @@ class _Candidate(TypedDict):
     node: exp.Expr
     value: Binding
     field_keys: set[tuple[str, ...]]
+
+
+@dataclass(frozen=True)
+class _CallerBindingReference:
+    slot_number: int
+
+
+@dataclass(frozen=True)
+class _PreparedStructure:
+    warnings: bool
+    msg: str
+    sql_fingerprint: str
+    dialect: tuple[str, str]
+    statement_type: StatementType
+    sql: str
+    binding_route: tuple[Binding, ...]
+    where_fields: tuple[WhereField, ...]
+    hardcoded_value_count: int
+    hardcoded_field_count: int
 
 
 _DIRECT_PREDICATES = (
@@ -178,7 +200,7 @@ def _prepare_statement(
     source_dialect: str,
     target_dialect: str,
 ) -> PreparedStatement:
-    """Prepare one validated call; unexpected defects intentionally escape."""
+    """Return a fresh envelope from a cached or newly built SQL structure."""
     source_dialect = _require_dialect(source_dialect, role="source")
     target_dialect = _require_dialect(target_dialect, role="target")
     try:
@@ -190,6 +212,51 @@ def _prepare_statement(
         )
     except ParameterPlanningError as error:
         raise BindingCountError(str(error)) from error
+
+    structure = _prepare_statement_structure(
+        sql,
+        source_dialect,
+        target_dialect,
+        tuple(
+            slot.bind_name or f"#{slot.number}"
+            for slot in parameter_plan.slots
+        ),
+    )
+    return _materialize_prepared_statement(
+        structure,
+        parameter_plan=parameter_plan,
+        source_dialect=source_dialect,
+        target_dialect=target_dialect,
+    )
+
+
+@lru_cache(maxsize=256)
+def _prepare_statement_structure(
+    sql: str,
+    source_dialect: str,
+    target_dialect: str,
+    binding_names: tuple[str, ...],
+) -> _PreparedStructure:
+    """Build one immutable, process-local structure without caller values."""
+    slots, occurrences = source_parameter_structure(
+        sql,
+        source_dialect=source_dialect,
+        target_dialect=target_dialect,
+    )
+    observed_binding_names = tuple(
+        slot.bind_name or f"#{slot.number}" for slot in slots
+    )
+    if observed_binding_names != binding_names:
+        raise RuntimeError("binding structure changed during statement preparation")
+
+    parameter_plan = ParameterPlan(
+        slots=slots,
+        occurrences=occurrences,
+        occurrence_values=tuple(
+            _CallerBindingReference(occurrence.slot_number)
+            for occurrence in occurrences
+        ),
+    )
     source_sql, marker_values = _tag_source_placeholders(
         sql,
         parameter_plan=parameter_plan,
@@ -278,17 +345,66 @@ def _prepare_statement(
             else None
         )
     )
+    return _PreparedStructure(
+        warnings=status["warnings"],
+        msg=status["msg"],
+        sql_fingerprint=sql_fingerprint,
+        dialect=(source_dialect, target_dialect),
+        statement_type=statement_type,
+        sql=target_sql,
+        binding_route=tuple(merged_bindings),
+        where_fields=tuple(where_fields),
+        hardcoded_value_count=hardcoded_value_count,
+        hardcoded_field_count=len(field_keys),
+    )
+
+
+def _materialize_prepared_statement(
+    structure: _PreparedStructure,
+    *,
+    parameter_plan: ParameterPlan,
+    source_dialect: str,
+    target_dialect: str,
+) -> PreparedStatement:
+    slot_values: dict[int, Binding] = {}
+    for occurrence, value in zip(
+        parameter_plan.occurrences,
+        parameter_plan.occurrence_values,
+        strict=True,
+    ):
+        slot_values.setdefault(occurrence.slot_number, value)
+
+    converted_slot_values: dict[int, Binding] = {}
+    bindings: list[Binding] = []
+    for item in structure.binding_route:
+        if not isinstance(item, _CallerBindingReference):
+            bindings.append(item)
+            continue
+
+        slot_number = item.slot_number
+        if slot_number not in slot_values:
+            raise RuntimeError("cached binding route references an absent source slot")
+        if slot_number not in converted_slot_values:
+            converted_slot_values[slot_number] = _target_binding_value(
+                slot_values[slot_number],
+                source_dialect=source_dialect,
+                target_dialect=target_dialect,
+            )
+        bindings.append(converted_slot_values[slot_number])
+
     return {
-        **status,
-        "sql_fingerprint": sql_fingerprint,
-        "dialect": [source_dialect, target_dialect],
-        "statement_type": statement_type,
-        "sql": target_sql,
-        "bindings": merged_bindings,
-        "where_fields": where_fields,
+        "success": True,
+        "warnings": structure.warnings,
+        "msg": structure.msg,
+        "sql_fingerprint": structure.sql_fingerprint,
+        "dialect": list(structure.dialect),
+        "statement_type": structure.statement_type,
+        "sql": structure.sql,
+        "bindings": bindings,
+        "where_fields": list(structure.where_fields),
         "analysis": {
-            "hardcoded_value_count": hardcoded_value_count,
-            "hardcoded_field_count": len(field_keys),
+            "hardcoded_value_count": structure.hardcoded_value_count,
+            "hardcoded_field_count": structure.hardcoded_field_count,
         },
     }
 

@@ -23,10 +23,10 @@ def where_fields(
 
 
 class WhereFieldsTests(unittest.TestCase):
-    def test_unknown_database_remains_none(self) -> None:
+    def test_unknown_database_uses_table_field_form(self) -> None:
         self.assertEqual(
             where_fields("SELECT * FROM people AS p WHERE p.id = 1"),
-            [{"database": None, "table": "people", "field": "id"}],
+            ["people.id"],
         )
 
     def test_explicit_database_is_preserved_through_an_alias(self) -> None:
@@ -35,19 +35,13 @@ class WhereFieldsTests(unittest.TestCase):
                 "SELECT * FROM main.people AS p "
                 "WHERE p.id = 1 AND p.status = 'active'"
             ),
-            [
-                {"database": "main", "table": "people", "field": "id"},
-                {"database": "main", "table": "people", "field": "status"},
-            ],
+            ["main.people.id", "main.people.status"],
         )
 
     def test_unqualified_fields_resolve_against_one_physical_source(self) -> None:
         self.assertEqual(
             where_fields("SELECT * FROM people WHERE id = 1 AND status = 'active'"),
-            [
-                {"database": None, "table": "people", "field": "id"},
-                {"database": None, "table": "people", "field": "status"},
-            ],
+            ["people.id", "people.status"],
         )
 
     def test_unqualified_field_with_multiple_sources_has_unknown_table(self) -> None:
@@ -56,7 +50,7 @@ class WhereFieldsTests(unittest.TestCase):
                 "SELECT * FROM people AS p JOIN orders AS o ON o.person_id = p.id "
                 "WHERE status = 'active'"
             ),
-            [{"database": None, "table": None, "field": "status"}],
+            ["status"],
         )
 
     def test_nested_correlated_fields_resolve_inner_and_outer_aliases(self) -> None:
@@ -70,11 +64,7 @@ class WhereFieldsTests(unittest.TestCase):
                 )
                 """
             ),
-            [
-                {"database": None, "table": "orders", "field": "customer_id"},
-                {"database": None, "table": "customers", "field": "customer_id"},
-                {"database": None, "table": "orders", "field": "status"},
-            ],
+            ["orders.customer_id", "customers.customer_id", "orders.status"],
         )
 
     def test_unqualified_field_in_correlatable_subquery_is_retained(self) -> None:
@@ -88,16 +78,13 @@ class WhereFieldsTests(unittest.TestCase):
                 )
                 """
             ),
-            [
-                {"database": None, "table": None, "field": "customer_id"},
-                {"database": None, "table": "customers", "field": "customer_id"},
-            ],
+            ["customer_id", "customers.customer_id"],
         )
 
     def test_field_without_any_source_is_retained(self) -> None:
         self.assertEqual(
             where_fields("SELECT 1 WHERE mystery = 1"),
-            [{"database": None, "table": None, "field": "mystery"}],
+            ["mystery"],
         )
 
     def test_derived_alias_field_is_retained_with_unknown_physical_table(self) -> None:
@@ -111,16 +98,13 @@ class WhereFieldsTests(unittest.TestCase):
                 WHERE filtered.id = 1
                 """
             ),
-            [
-                {"database": None, "table": None, "field": "id"},
-                {"database": None, "table": "people", "field": "active"},
-            ],
+            ["id", "people.active"],
         )
 
     def test_repeated_physical_field_is_returned_once(self) -> None:
         self.assertEqual(
             where_fields("SELECT * FROM people AS p WHERE p.id = 1 OR p.id = 2"),
-            [{"database": None, "table": "people", "field": "id"}],
+            ["people.id"],
         )
 
     def test_hardcoded_and_parameterized_forms_converge(self) -> None:
@@ -141,7 +125,7 @@ class WhereFieldsTests(unittest.TestCase):
             with self.subTest(sql=sql):
                 self.assertEqual(
                     where_fields(sql),
-                    [{"database": None, "table": "people", "field": "id"}],
+                    ["people.id"],
                 )
 
     def test_unqualified_update_and_delete_targets_are_resolved(self) -> None:
@@ -153,7 +137,7 @@ class WhereFieldsTests(unittest.TestCase):
             with self.subTest(sql=sql):
                 self.assertEqual(
                     where_fields(sql),
-                    [{"database": None, "table": "people", "field": "id"}],
+                    ["people.id"],
                 )
 
     def test_insert_select_where_is_also_inspected(self) -> None:
@@ -162,7 +146,7 @@ class WhereFieldsTests(unittest.TestCase):
                 "INSERT INTO archive_people (id) "
                 "SELECT p.id FROM people AS p WHERE p.active = 0"
             ),
-            [{"database": None, "table": "people", "field": "active"}],
+            ["people.active"],
         )
 
 

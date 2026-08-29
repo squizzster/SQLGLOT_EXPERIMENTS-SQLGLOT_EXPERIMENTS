@@ -158,15 +158,9 @@ class SqliteTortureConsumerTests(unittest.TestCase):
         self.assertEqual(len(packages), 587)
         self.assertEqual(len(fields), 559)
         self.assertEqual(sum(bool(package["where_fields"]) for package in packages), 320)
-        self.assertEqual(sum(field["table"] is not None for field in fields), 494)
-        self.assertEqual(sum(field["table"] is None for field in fields), 65)
-        self.assertTrue(
-            all(
-                set(field) == {"database", "table", "field"}
-                and field["field"]
-                for field in fields
-            )
-        )
+        self.assertEqual(sum("." in field for field in fields), 494)
+        self.assertEqual(sum("." not in field for field in fields), 65)
+        self.assertTrue(all(isinstance(field, str) and field for field in fields))
 
     def test_complete_torture_run_has_no_genuine_failures(self) -> None:
         self.assertEqual(self.report["summary"]["genuine_failure_count"], 0)

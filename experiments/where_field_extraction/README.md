@@ -85,8 +85,7 @@ identity.
 ## Production decision
 
 Every distinct field was promoted to the public `prepare_statement` success
-payload as `where_fields`. Observed physical sources are retained, and the
-narrow single-direct-source case is resolved for unqualified fields. Ambiguous,
-correlatable, derived, and unresolved ownership remains visible with `table` as
-`None`; those fields are never omitted. An absent database likewise remains
-`None`.
+payload as the SQL-shaped `where_fields: list[str]`. Observed physical sources
+and the narrow single-direct-source inference render as `table.field` or
+`database.table.field`. Ambiguous, correlatable, derived, and unresolved
+ownership renders as the bare `field`; those fields are never omitted.

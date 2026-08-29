@@ -1,17 +1,11 @@
-"""Reliable physical-table fields referenced beneath WHERE nodes."""
+"""WHERE fields enriched with physical source names when provable."""
 
 from __future__ import annotations
-
-from typing import TypedDict
 
 from sqlglot import exp
 from sqlglot.optimizer.scope import Scope, find_all_in_scope, traverse_scope
 
-
-class WhereField(TypedDict):
-    database: str | None
-    table: str | None
-    field: str
+type WhereField = str
 
 
 def extract_where_fields(statement: exp.Expr) -> list[WhereField]:
@@ -22,7 +16,7 @@ def extract_where_fields(statement: exp.Expr) -> list[WhereField]:
         for column_id in scope.column_index
     }
     dml_sources = _dml_sources(statement)
-    seen: set[tuple[str | None, str | None, str]] = set()
+    seen: set[str] = set()
     fields: list[WhereField] = []
 
     for where in statement.find_all(exp.Where):
@@ -34,21 +28,21 @@ def extract_where_fields(statement: exp.Expr) -> list[WhereField]:
                 scope=scope_by_column.get(id(column)),
                 dml_sources=dml_sources,
             )
-            database_name = (table.db or None) if table is not None else None
-            table_name = (table.name or None) if table is not None else None
-            identity = (database_name, table_name, column.name)
-            if identity in seen:
+            field_name = _field_name(column, table=table)
+            if field_name in seen:
                 continue
-            seen.add(identity)
-            fields.append(
-                {
-                    "database": database_name,
-                    "table": table_name,
-                    "field": column.name,
-                }
-            )
+            seen.add(field_name)
+            fields.append(field_name)
 
     return fields
+
+
+def _field_name(column: exp.Column, *, table: exp.Table | None) -> str:
+    if table is None or not table.name:
+        return column.name
+    if table.db:
+        return f"{table.db}.{table.name}.{column.name}"
+    return f"{table.name}.{column.name}"
 
 
 def _physical_source(

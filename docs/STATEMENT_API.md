@@ -28,9 +28,7 @@ returns one compact, execution-complete package:
     "statement_type": "SELECT",
     "sql": "SELECT * FROM orders WHERE category = ?",
     "bindings": ["sales"],
-    "where_fields": [
-        {"database": None, "table": "orders", "field": "category"},
-    ],
+    "where_fields": ["orders.category"],
     "analysis": {
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
@@ -79,9 +77,9 @@ values are reordered with it.
 
 `dialect` is always the ordered `[source, target]` pair.
 
-`where_fields` is always an array containing every distinct field found beneath
-`WHERE` nodes. Each item includes the physical database and table wherever the
-source AST proves them:
+`where_fields` is always a `list[str]` containing every distinct field found
+beneath `WHERE` nodes. Each item uses the most specific physical SQL
+qualification the source AST proves:
 
 ```python
 prepare_statement(
@@ -90,28 +88,27 @@ prepare_statement(
     target_dialect="sqlite",
 )["where_fields"]
 
-# [
-#     {"database": "main", "table": "people", "field": "id"},
-#     {"database": "main", "table": "people", "field": "status"},
-# ]
+# ["main.people.id", "main.people.status"]
 ```
 
 Qualified aliases resolve directly to their physical tables. An unqualified
 field resolves when its non-correlatable query scope has exactly one direct
 physical source, and for a simple `UPDATE` or `DELETE` when there is exactly one
-physical DML source. The database is `None` when SQL does not name it. The table
-is `None` only when ownership is ambiguous or depends on schema/lineage, such as
-an unqualified join field, a potentially correlated unqualified field, or a
-derived/CTE output. No field is omitted because its source is unknown:
+physical DML source. The three fixed forms are:
 
 ```python
-# FROM people AS p JOIN orders AS o ... WHERE status = 'active'
-[{"database": None, "table": None, "field": "status"}]
+"id"                  # physical table unknown
+"people.id"           # physical table proven; database unknown
+"main.people.id"      # database and physical table proven
 ```
 
-Repeated references to the same database/table/field identity are returned
-once, in deterministic AST order. An empty array means no field reference was
-found beneath a `WHERE`; a constant-only `WHERE 1 = 1` is one such case.
+Ambiguous joins, potentially correlated unqualified fields, and derived/CTE
+outputs use the bare-field form rather than inventing physical ownership. No
+field is omitted because its source is unknown. Aliases are replaced with their
+physical table names when resolved: `p.id` from `people AS p` becomes
+`people.id`. Repeated strings are returned once, in deterministic AST order. An
+empty array means no field reference was found beneath a `WHERE`; a
+constant-only `WHERE 1 = 1` is one such case.
 
 `hardcoded_value_count` counts replaced occurrences and
 `hardcoded_field_count` counts their distinct AST-associated fields. These

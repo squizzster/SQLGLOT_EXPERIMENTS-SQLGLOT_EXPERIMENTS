@@ -58,7 +58,7 @@ Successful packages also include `where_fields`, every distinct field beneath
 `WHERE` nodes as SQL-shaped strings. The fixed forms are `field`,
 `table.field`, and `database.table.field`, depending on how much physical
 ownership the source AST proves. The field itself is never omitted. Across 587
-successful adversarial packages, 559 distinct WHERE fields were returned: 494
+successful adversarial packages, 559 WHERE-field entries were returned: 494
 qualified to a physical table and 65 retained as bare fields.
 
 Prepared SQL structures use a built-in LRU with a default limit of 128 entries

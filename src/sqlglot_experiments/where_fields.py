@@ -3,20 +3,29 @@
 from __future__ import annotations
 
 from sqlglot import exp
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import Scope, find_all_in_scope, traverse_scope
 
 type WhereField = str
 
 
-def extract_where_fields(statement: exp.Expr) -> list[WhereField]:
+def extract_where_fields(
+    statement: exp.Expr,
+    *,
+    source_dialect: str,
+) -> list[WhereField]:
     """Return every distinct WHERE field with physical source data when known."""
+    statement = normalize_identifiers(
+        statement.copy(),
+        dialect=source_dialect,
+    )
     scope_by_column = {
         column_id: scope
         for scope in traverse_scope(statement)
         for column_id in scope.column_index
     }
     dml_sources = _dml_sources(statement)
-    seen: set[str] = set()
+    seen: set[tuple[str | None, str | None, str]] = set()
     fields: list[WhereField] = []
 
     for where in statement.find_all(exp.Where):
@@ -28,21 +37,58 @@ def extract_where_fields(statement: exp.Expr) -> list[WhereField]:
                 scope=scope_by_column.get(id(column)),
                 dml_sources=dml_sources,
             )
-            field_name = _field_name(column, table=table)
-            if field_name in seen:
+            identity, field_name = _field_identity_and_name(
+                column,
+                table=table,
+                source_dialect=source_dialect,
+            )
+            if identity in seen:
                 continue
-            seen.add(field_name)
+            seen.add(identity)
             fields.append(field_name)
 
     return fields
 
 
-def _field_name(column: exp.Column, *, table: exp.Table | None) -> str:
+def _field_identity_and_name(
+    column: exp.Column,
+    *,
+    table: exp.Table | None,
+    source_dialect: str,
+) -> tuple[tuple[str | None, str | None, str], str]:
+    column_identifier = _identifier(column.this)
     if table is None or not table.name:
-        return column.name
-    if table.db:
-        return f"{table.db}.{table.name}.{column.name}"
-    return f"{table.name}.{column.name}"
+        return (
+            (None, None, column.name),
+            column_identifier.sql(dialect=source_dialect),
+        )
+
+    table_identifier = _identifier(table.this)
+    database = table.args.get("db")
+    database_identifier = (
+        database if isinstance(database, exp.Identifier) else None
+    )
+    identity = (
+        database_identifier.name if database_identifier is not None else None,
+        table.name,
+        column.name,
+    )
+    parts = []
+    if database_identifier is not None:
+        parts.append(database_identifier.sql(dialect=source_dialect))
+    parts.extend(
+        (
+            table_identifier.sql(dialect=source_dialect),
+            column_identifier.sql(dialect=source_dialect),
+        )
+    )
+    return identity, ".".join(parts)
+
+
+def _identifier(expression: exp.Expr) -> exp.Identifier:
+    if not isinstance(expression, exp.Identifier):
+        raise TypeError("WHERE field identifier is not an SQL identifier")
+    return expression
 
 
 def _physical_source(

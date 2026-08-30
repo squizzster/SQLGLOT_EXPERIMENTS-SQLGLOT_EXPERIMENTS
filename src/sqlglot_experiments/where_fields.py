@@ -19,9 +19,16 @@ def extract_where_fields(
         statement.copy(),
         dialect=source_dialect,
     )
+    scopes = list(traverse_scope(statement))
+    for merge in statement.find_all(exp.Merge):
+        scopes.extend(
+            scope
+            for query in _merge_query_roots(merge)
+            for scope in traverse_scope(query)
+        )
     scope_by_column = {
         column_id: scope
-        for scope in traverse_scope(statement)
+        for scope in scopes
         for column_id in scope.column_index
     }
     dml_sources = _dml_sources(statement)
@@ -120,12 +127,39 @@ def _physical_source(
 
 
 def _dml_sources(statement: exp.Expr) -> dict[str, exp.Table]:
-    if not isinstance(statement, (exp.Update, exp.Delete)):
-        return {}
-
     cte_names = {cte.alias_or_name for cte in statement.find_all(exp.CTE)}
-    return {
-        table.alias_or_name: table
-        for table in find_all_in_scope(statement, exp.Table)
-        if table.name and table.name not in cte_names
-    }
+    if isinstance(statement, (exp.Update, exp.Delete)):
+        return {
+            table.alias_or_name: table
+            for table in find_all_in_scope(statement, exp.Table)
+            if table.name and table.name not in cte_names
+        }
+
+    sources: dict[str, exp.Table] = {}
+    for merge in statement.find_all(exp.Merge):
+        for candidate in (merge.this, merge.args.get("using")):
+            if (
+                isinstance(candidate, exp.Table)
+                and candidate.name
+                and candidate.name not in cte_names
+            ):
+                sources[candidate.alias_or_name] = candidate
+    return sources
+
+
+def _merge_query_roots(statement: exp.Merge) -> list[exp.Query]:
+    roots: list[exp.Query] = []
+    using = statement.args.get("using")
+    if isinstance(using, exp.Subquery) and isinstance(using.this, exp.Query):
+        roots.append(using.this)
+    elif isinstance(using, exp.Query):
+        roots.append(using)
+
+    with_ = statement.args.get("with_")
+    if isinstance(with_, exp.With):
+        roots.extend(
+            cte.this
+            for cte in with_.expressions
+            if isinstance(cte, exp.CTE) and isinstance(cte.this, exp.Query)
+        )
+    return roots

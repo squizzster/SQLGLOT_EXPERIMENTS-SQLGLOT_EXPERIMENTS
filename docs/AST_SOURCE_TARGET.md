@@ -28,6 +28,10 @@ Rules:
 - Transform: source and target dialect semantics are explicit on every call.
 - Generate: source AST semantics and target SQL dialect are explicit.
 - Reparse generated SQL as target dialect before returning it.
+- Require the target AST to retain the source operation and extended-statement
+  semantic signature.
 - Transform a copy; retain the source AST.
 - Never reuse a target-prepared AST for a different target.
 - SQLGlot parsing or generation is not target-engine validation.
+- Dialect-specific REPLACE and MERGE policy belongs in narrow adapters and
+  structural validation, not in a parallel public pipeline.

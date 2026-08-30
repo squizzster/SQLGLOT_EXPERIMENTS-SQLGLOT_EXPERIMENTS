@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from hashlib import sha256
 from importlib.metadata import version
-from typing import Literal, cast
+from typing import cast
 
 from sqlglot import Dialect, exp, parse
 from sqlglot.errors import SqlglotError
@@ -14,8 +14,12 @@ from sqlglot_experiments.source_parameters import (
     ParameterPlanningError,
     source_parameter_structure,
 )
-
-StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE"]
+from sqlglot_experiments.statement_classification import (
+    StatementClassificationError,
+    StatementType,
+    require_extended_statement_type,
+    statement_semantic_signature,
+)
 
 _ALGORITHM = "sqlglot-experiments/statement-fingerprint/v1"
 _CANONICALIZER = f"sqlglot/{version('sqlglot')}"
@@ -78,7 +82,17 @@ def fingerprint_statement(
             raise FingerprintingError(
                 "target rendering changed the SQL statement type"
             )
-    except (ParameterPlanningError, SqlglotError) as error:
+        if statement_semantic_signature(target_ast) != statement_semantic_signature(
+            shape_ast
+        ):
+            raise FingerprintingError(
+                "target rendering changed the SQL statement semantics"
+            )
+    except (
+        ParameterPlanningError,
+        StatementClassificationError,
+        SqlglotError,
+    ) as error:
         raise FingerprintingError("SQL fingerprinting failed") from error
 
     payload = json.dumps(
@@ -153,17 +167,10 @@ def _statement_type(
     source_dialect: str,
     target_dialect: str,
 ) -> StatementType:
-    if isinstance(statement, exp.Query):
-        return "SELECT"
-    if isinstance(statement, exp.Insert):
-        return "INSERT"
-    if isinstance(statement, exp.Update):
-        return "UPDATE"
-    if isinstance(statement, exp.Delete):
-        return "DELETE"
-    raise FingerprintingError(
-        "only SELECT, INSERT, UPDATE, and DELETE statements are supported"
-    )
+    try:
+        return require_extended_statement_type(statement, dialect=source_dialect)
+    except StatementClassificationError as error:
+        raise FingerprintingError(str(error)) from error
 
 
 def _normalize_value_sites(

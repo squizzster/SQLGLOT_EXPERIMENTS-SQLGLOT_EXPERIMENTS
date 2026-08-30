@@ -27,7 +27,7 @@ values discriminate the three complete preparation-result shapes:
 
 | `envelope_type` | Meaning |
 |---|---|
-| `prepared` | DML completed the extended preparation pipeline |
+| `prepared` | A configured operation completed the extended preparation pipeline |
 | `accepted` | Another source statement parsed and received generic acceptance |
 | `failure` | A recognised preparation failure occurred |
 
@@ -53,6 +53,7 @@ are not warnings. Fingerprinting works on a copied AST and adds its digest to
 the success payload without altering generated SQL or warning state.
 
 SQLGlot-accepted statements outside the extended `SELECT`, `INSERT`, `UPDATE`,
-and `DELETE` route return the normal three-field success envelope plus only a
-`sql_fingerprint`. This is syntactic source acceptance, not preparation or an
-execution-readiness claim.
+`DELETE`, `MERGE`, and `REPLACE` route return the normal three-field success
+envelope plus only a `sql_fingerprint`. This is syntactic source acceptance,
+not preparation or an execution-readiness claim. `WITH` does not add another
+envelope type: the AST's effective operation determines the prepared family.

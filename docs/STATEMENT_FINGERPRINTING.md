@@ -1,14 +1,16 @@
 # Statement fingerprinting
 
 `statement_fingerprinting.py` provides the internal fingerprint mechanism for
-one `SELECT`, `INSERT`, `UPDATE`, or `DELETE`. The function remains non-public;
-successful `prepare_statement` packages expose its digest as
-`sql_fingerprint`.
+one `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, or `REPLACE`. The function
+remains non-public; successful `prepare_statement` packages expose its digest
+as `sql_fingerprint`.
 
 - The caller supplies explicit source and target dialects.
 - Bind values and SQLGlot-native placeholders are normalized while structural
   literals, statement structure, and value-site count remain significant.
 - The normalized AST is rendered for the target and reparsed as that target.
+- A schema-free semantic signature verifies that REPLACE form and MERGE action
+  structure survived target rendering.
 - SHA-256 covers the algorithm and SQLGlot versions, statement type, canonical
   SQL, source, and target. The dialect route is therefore part of identity.
 - Bindings are not required. Fingerprinting transforms a copied AST and does not

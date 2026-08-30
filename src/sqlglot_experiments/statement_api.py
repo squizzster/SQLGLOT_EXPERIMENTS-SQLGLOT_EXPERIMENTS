@@ -324,7 +324,10 @@ def _build_statement_structure(
         source_dialect=source_dialect,
         target_dialect=source_dialect,
     )
-    where_fields = extract_where_fields(source_ast)
+    where_fields = extract_where_fields(
+        source_ast,
+        source_dialect=source_dialect,
+    )
     _require_owned_placeholders(
         source_ast,
         marker_values=marker_values,

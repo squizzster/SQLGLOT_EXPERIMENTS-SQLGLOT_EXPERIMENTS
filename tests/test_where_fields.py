@@ -107,6 +107,23 @@ class WhereFieldsTests(unittest.TestCase):
             ["people.id"],
         )
 
+    def test_unquoted_alias_and_field_case_follow_sqlite_identity(self) -> None:
+        self.assertEqual(
+            where_fields(
+                "SELECT * FROM people AS p WHERE p.id = 1 OR P.ID = 2"
+            ),
+            ["people.id"],
+        )
+
+    def test_quoted_dots_remain_distinct_from_qualification_dots(self) -> None:
+        self.assertEqual(
+            where_fields(
+                'SELECT * FROM "a.b" AS x JOIN a.b AS y ON 1 = 1 '
+                "WHERE x.c = 1 OR y.c = 2"
+            ),
+            ['"a.b".c', "a.b.c"],
+        )
+
     def test_hardcoded_and_parameterized_forms_converge(self) -> None:
         hardcoded = where_fields("SELECT * FROM people AS p WHERE p.id = 1")
         parameterized = where_fields(

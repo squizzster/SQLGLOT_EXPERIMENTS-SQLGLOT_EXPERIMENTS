@@ -20,7 +20,7 @@ instead of raising Python's argument-binding `TypeError`. `bindings` is omitted
 when the input has no placeholders. Otherwise it resolves values through the
 declared source dialect's logical parameter slots. Every recognised outcome
 follows the [public API envelope](API_ENVELOPE.md). A successful replacement
-returns one compact, execution-complete package:
+returns one compact, preparation-complete package:
 
 ```python
 {
@@ -110,9 +110,11 @@ Ambiguous joins, potentially correlated unqualified fields, and derived/CTE
 outputs use the bare-field form rather than inventing physical ownership. No
 field is omitted because its source is unknown. Aliases are replaced with their
 physical table names when resolved: `p.id` from `people AS p` becomes
-`people.id`. Repeated strings are returned once, in deterministic AST order. An
-empty array means no field reference was found beneath a `WHERE`; a
-constant-only `WHERE 1 = 1` is one such case.
+`people.id`. Source-dialect identifier identity is respected, and quoting is
+preserved when required to distinguish an identifier containing a dot from SQL
+qualification dots. Repeated physical identities are returned once, in
+deterministic AST order. An empty array means no field reference was found
+beneath a `WHERE`; a constant-only `WHERE 1 = 1` is one such case.
 
 `hardcoded_value_count` counts replaced occurrences and
 `hardcoded_field_count` counts their distinct AST-associated fields. These
@@ -121,10 +123,12 @@ both remain `0` for already-parameterized input. An `INSERT` without a column
 list can still lift its values, but its field count is `0` because the SQL does
 not name the fields.
 
-Missing or extra caller bindings return a failure envelope. A successful return
-therefore always contains every binding needed by its generated SQL. Repeated
-source slots reuse one input value and expand into generated-target-placeholder
-order when necessary.
+Missing caller bindings and incorrectly sized binding sequences return a
+failure envelope. SQLite mappings must contain every required named key;
+unrelated mapping keys are ignored. A successful return therefore always
+contains every binding needed by its generated SQL. Repeated source slots reuse
+one input value and expand into generated-target-placeholder order when
+necessary.
 
 ## `set_lru_cache_size`
 
@@ -199,5 +203,6 @@ separation and SQLite's extended Tcl-style parameter names remain unsupported.
 The SQLite target is execution-tested with Python's `sqlite3` driver, including
 same-dialect cast affinity and partial-index predicates. Other targets use
 SQLGlot's target rendering, including its placeholder spelling; that is not
-target-engine validation. Brick 1 owns analysis and preparation only; a later
-pipeline brick owns database execution.
+target-engine validation. Preparation does not prove that a particular driver,
+schema, or engine will accept or execute the package. Brick 1 owns analysis and
+preparation only; a later pipeline brick owns database execution.

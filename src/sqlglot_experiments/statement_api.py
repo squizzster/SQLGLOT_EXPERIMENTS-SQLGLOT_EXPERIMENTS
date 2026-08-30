@@ -10,6 +10,7 @@ from sqlglot import Dialect, exp, parse
 from sqlglot.errors import ParseError, SqlglotError, TokenError, UnsupportedError
 
 from sqlglot_experiments.api_envelope import (
+    ApiEnvelope,
     ApiFailureEnvelope,
     ApiSuccessEnvelope,
     failure_envelope,
@@ -31,6 +32,7 @@ from sqlglot_experiments.where_fields import (
 )
 
 StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE"]
+_DEFAULT_LRU_CACHE_SIZE = 128
 
 
 class Analysis(TypedDict):
@@ -61,6 +63,10 @@ class BindingCountError(StatementPreparationError):
 
 class UnsupportedStatementError(StatementPreparationError):
     """The SQL statement is outside the prototype's DML contract."""
+
+
+class LruCacheConfigurationError(ValueError):
+    """The requested process-local LRU configuration is invalid."""
 
 
 class _Candidate(TypedDict):
@@ -135,6 +141,51 @@ def prepare_statement(*args: object, **kwargs: object) -> PreparationResult:
         )
     except (StatementPreparationError, SqlglotError) as error:
         return failure_envelope(_failure_reason(error))
+
+
+@overload
+def set_lru_cache_size(size: int) -> ApiEnvelope: ...
+
+
+@overload
+def set_lru_cache_size(size: int | None = None) -> ApiEnvelope: ...
+
+
+def set_lru_cache_size(*args: object, **kwargs: object) -> ApiEnvelope:
+    """Set and empty this process's prepared-statement structure LRU."""
+    try:
+        size = _validate_lru_cache_call(args, kwargs)
+    except LruCacheConfigurationError as error:
+        return failure_envelope(str(error))
+
+    _replace_statement_structure_cache(size)
+    return success_envelope()
+
+
+def _validate_lru_cache_call(
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+) -> int:
+    if len(args) > 1:
+        raise LruCacheConfigurationError("only size may be passed positionally")
+
+    unexpected_arguments = sorted(set(kwargs) - {"size"})
+    if unexpected_arguments:
+        label = "argument" if len(unexpected_arguments) == 1 else "arguments"
+        names = ", ".join(unexpected_arguments)
+        raise LruCacheConfigurationError(f"unexpected {label}: {names}")
+
+    if args and "size" in kwargs:
+        raise LruCacheConfigurationError("size was provided more than once")
+
+    size = args[0] if args else kwargs.get("size")
+    if size is None:
+        raise LruCacheConfigurationError("lru cache size is required")
+    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        raise LruCacheConfigurationError(
+            "lru cache size must be a positive integer"
+        )
+    return size
 
 
 def _validate_public_call(
@@ -230,8 +281,7 @@ def _prepare_statement(
     )
 
 
-@lru_cache(maxsize=256)
-def _prepare_statement_structure(
+def _build_statement_structure(
     sql: str,
     source_dialect: str,
     target_dialect: str,
@@ -357,6 +407,21 @@ def _prepare_statement_structure(
         hardcoded_value_count=hardcoded_value_count,
         hardcoded_field_count=len(field_keys),
     )
+
+
+_prepare_statement_structure = lru_cache(maxsize=_DEFAULT_LRU_CACHE_SIZE)(
+    _build_statement_structure
+)
+
+
+def _replace_statement_structure_cache(size: int) -> None:
+    global _prepare_statement_structure
+
+    previous_cache = _prepare_statement_structure
+    _prepare_statement_structure = lru_cache(maxsize=size)(
+        _build_statement_structure
+    )
+    previous_cache.cache_clear()
 
 
 def _materialize_prepared_statement(

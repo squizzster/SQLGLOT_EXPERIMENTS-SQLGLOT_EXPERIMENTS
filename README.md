@@ -11,10 +11,12 @@ checks, and explicit limitations while breaking changes remain expected.
 
 ## Current state
 
-`prepare_statement` is the library's first public API command. It accepts
+The library exposes two public API commands. `prepare_statement` accepts
 exactly one `SELECT`, `INSERT`, `UPDATE`, or `DELETE`, optional source-native
 sequence or mapping bindings, and explicit source and target dialects. Every
 recognised outcome carries the fixed `success`, `warnings`, and `msg` envelope.
+`set_lru_cache_size` configures the library's prepared-structure cache in the
+calling Python process and returns the same fixed envelope.
 A successful hardcoded-value replacement returns:
 
 ```python
@@ -59,11 +61,13 @@ ownership the source AST proves. The field itself is never omitted. Across 587
 successful adversarial packages, 559 distinct WHERE fields were returned: 494
 qualified to a physical table and 65 retained as bare fields.
 
-Prepared SQL structures use a built-in 256-entry LRU per Python process.
+Prepared SQL structures use a built-in LRU with a default limit of 128 entries
+per Python process. Consumers may replace that limit with
+`set_lru_cache_size(size)`; a successful call empties the current process cache.
 Normalized dialects, exact SQL, and binding names identify the structure;
 caller binding values remain outside the cache. Hits resolve the cached binding
-route with current values and return a fresh public envelope. Separate consumer
-processes therefore have separate caches.
+route with current values and return a fresh public envelope. Separate Python
+processes therefore have separate library caches.
 
 ## Design notes
 

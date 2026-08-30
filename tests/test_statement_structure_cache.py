@@ -8,6 +8,7 @@ from sqlglot_experiments import (
     InputBindings,
     PreparedStatement,
     prepare_statement,
+    set_lru_cache_size,
     statement_api,
 )
 
@@ -32,10 +33,14 @@ def prepared(
 
 class StatementStructureCacheTests(unittest.TestCase):
     def setUp(self) -> None:
-        statement_api._prepare_statement_structure.cache_clear()
+        result = set_lru_cache_size(128)
+        self.assertEqual(
+            result,
+            {"success": True, "warnings": False, "msg": "success: ok"},
+        )
 
     def tearDown(self) -> None:
-        statement_api._prepare_statement_structure.cache_clear()
+        set_lru_cache_size(128)
 
     def test_current_values_are_applied_to_one_named_structure(self) -> None:
         sql = "SELECT * FROM people WHERE id = :person_id"
@@ -95,23 +100,112 @@ class StatementStructureCacheTests(unittest.TestCase):
         info = statement_api._prepare_statement_structure.cache_info()
         self.assertEqual((info.hits, info.misses, info.currsize), (1, 1, 1))
 
-    def test_cache_is_bounded_to_256_lru_entries(self) -> None:
-        for index in range(257):
+    def test_default_cache_is_bounded_to_128_lru_entries(self) -> None:
+        for index in range(129):
             prepared(
                 f"SELECT * FROM people WHERE id = ? /* cache-{index} */",
                 bindings=[index],
             )
 
         full = statement_api._prepare_statement_structure.cache_info()
-        self.assertEqual(full.maxsize, 256)
-        self.assertEqual((full.hits, full.misses, full.currsize), (0, 257, 256))
+        self.assertEqual(full.maxsize, 128)
+        self.assertEqual((full.hits, full.misses, full.currsize), (0, 129, 128))
 
         prepared(
             "SELECT * FROM people WHERE id = ? /* cache-0 */",
             bindings=[999],
         )
         evicted = statement_api._prepare_statement_structure.cache_info()
-        self.assertEqual((evicted.hits, evicted.misses, evicted.currsize), (0, 258, 256))
+        self.assertEqual((evicted.hits, evicted.misses, evicted.currsize), (0, 130, 128))
+
+    def test_public_api_resizes_and_empties_this_process_cache(self) -> None:
+        sql = "SELECT * FROM people WHERE id = ?"
+        prepared(sql, bindings=[1])
+        previous_cache = statement_api._prepare_statement_structure
+
+        result = set_lru_cache_size(size=64)
+
+        self.assertEqual(
+            result,
+            {"success": True, "warnings": False, "msg": "success: ok"},
+        )
+        self.assertIsNot(statement_api._prepare_statement_structure, previous_cache)
+        self.assertEqual(previous_cache.cache_info().currsize, 0)
+        resized = statement_api._prepare_statement_structure.cache_info()
+        self.assertEqual(
+            (resized.maxsize, resized.hits, resized.misses, resized.currsize),
+            (64, 0, 0, 0),
+        )
+
+        prepared(sql, bindings=[2])
+        populated = statement_api._prepare_statement_structure.cache_info()
+        self.assertEqual(
+            (populated.maxsize, populated.hits, populated.misses, populated.currsize),
+            (64, 0, 1, 1),
+        )
+
+    def test_invalid_resize_calls_return_envelopes_without_changing_cache(self) -> None:
+        prepared("SELECT * FROM people WHERE id = ?", bindings=[1])
+        active_cache = statement_api._prepare_statement_structure
+        expected = {
+            "success": False,
+            "warnings": False,
+            "msg": "failure: lru cache size must be a positive integer",
+        }
+
+        for size in (0, -1, True, 1.5, "128"):
+            with self.subTest(size=size):
+                result = set_lru_cache_size(size)  # type: ignore[call-overload]
+                self.assertEqual(result, expected)
+                self.assertIs(
+                    statement_api._prepare_statement_structure,
+                    active_cache,
+                )
+
+        info = active_cache.cache_info()
+        self.assertEqual(
+            (info.maxsize, info.hits, info.misses, info.currsize),
+            (128, 0, 1, 1),
+        )
+
+    def test_malformed_resize_calls_return_specific_fixed_envelopes(self) -> None:
+        cases = (
+            (
+                (),
+                {},
+                "failure: lru cache size is required",
+            ),
+            (
+                (64, 128),
+                {},
+                "failure: only size may be passed positionally",
+            ),
+            (
+                (64,),
+                {"size": 128},
+                "failure: size was provided more than once",
+            ),
+            (
+                (),
+                {"maxsize": 64},
+                "failure: unexpected argument: maxsize",
+            ),
+        )
+
+        for args, kwargs, message in cases:
+            with self.subTest(args=args, kwargs=kwargs):
+                result = set_lru_cache_size(  # type: ignore[call-overload]
+                    *args,
+                    **kwargs,
+                )
+                self.assertEqual(
+                    result,
+                    {"success": False, "warnings": False, "msg": message},
+                )
+                self.assertEqual(
+                    statement_api._prepare_statement_structure.cache_info().maxsize,
+                    128,
+                )
 
     def test_invalid_calls_do_not_leave_cached_structures(self) -> None:
         for _ in range(2):

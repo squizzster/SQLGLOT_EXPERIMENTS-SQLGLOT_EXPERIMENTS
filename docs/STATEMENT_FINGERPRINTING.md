@@ -17,3 +17,8 @@ successful `prepare_statement` packages expose its digest as
 The retained torture corpus verifies 589 single statements: all fingerprint,
 and all 587 successful prepared forms converge with their source fingerprint.
 The one multi-statement case is deliberately rejected.
+
+Generic accepted statements also expose a `sql_fingerprint`, but do not enter
+this DML mechanism. Their digest covers the exact input SQL and normalized
+source/target dialect route. It identifies the accepted source input without
+implying value normalization, target rendering, or execution readiness.

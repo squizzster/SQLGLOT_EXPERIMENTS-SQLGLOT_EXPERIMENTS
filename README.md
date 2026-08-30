@@ -12,11 +12,13 @@ checks, and explicit limitations while breaking changes remain expected.
 ## Current state
 
 The library exposes two public API commands. `prepare_statement` accepts
-exactly one `SELECT`, `INSERT`, `UPDATE`, or `DELETE`, optional source-native
-sequence or mapping bindings, and explicit source and target dialects. Every
-recognised outcome carries the fixed `success`, `warnings`, and `msg` envelope.
-`set_lru_cache_size` configures the library's prepared-structure cache in the
-calling Python process and returns the same fixed envelope.
+exactly one SQLGlot-parsable source statement plus explicit source and target
+dialects. `SELECT`, `INSERT`, `UPDATE`, and `DELETE` use the extended preparation
+pipeline; every other parsed AST receives a compact generic success envelope
+and fingerprint without transformation. Every recognised outcome carries the
+fixed `success`, `warnings`, and `msg` envelope. `set_lru_cache_size` configures
+the library's prepared-DML structure cache in the calling Python process and
+returns the same fixed envelope.
 A successful hardcoded-value replacement returns:
 
 ```python
@@ -36,6 +38,22 @@ A successful hardcoded-value replacement returns:
     },
 }
 ```
+
+A parsed statement outside the extended DML route returns only:
+
+```python
+{
+    "success": True,
+    "warnings": False,
+    "msg": "success: ok",
+    "sql_fingerprint": "<64-character SHA-256>",
+}
+```
+
+This generic result confirms one source AST was accepted. It does not generate
+target SQL, process bindings, transform literals, or claim engine readiness.
+Malformed SQL such as `srerlct woof where` still returns the fixed failure
+envelope.
 
 Failures contain only the standard envelope; they never contain fake executable
 SQL or bindings. Messages are owned by this library, single-line, and limited to

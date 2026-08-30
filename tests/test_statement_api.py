@@ -10,6 +10,7 @@ from unittest.mock import ANY, patch
 
 from demo.sqlite_consumer import create_demo_database, execute_package, run_demo
 from sqlglot_experiments import (
+    AcceptedStatement,
     InputBindings,
     PreparationResult,
     PreparedStatement,
@@ -571,22 +572,166 @@ class StatementApiTests(unittest.TestCase):
             message_prefix="failure: expected exactly one SQL statement",
         )
 
-    def test_unsupported_statement_is_rejected(self) -> None:
+    def test_non_dml_statement_returns_only_acceptance_envelope_and_id(
+        self,
+    ) -> None:
         result = prepare_statement_result(
             "CREATE TABLE example (id INTEGER)",
             source_dialect="sqlite",
             target_dialect="sqlite",
         )
 
-        assert_failure(
-            self,
+        self.assertEqual(
             result,
-            message_prefix="failure: unsupported statement:",
+            {
+                "success": True,
+                "warnings": False,
+                "msg": "success: ok",
+                "sql_fingerprint": ANY,
+            },
+        )
+        accepted = cast(AcceptedStatement, result)
+        self.assertRegex(accepted["sql_fingerprint"], r"^[0-9a-f]{64}$")
+
+    def test_recognised_non_dml_families_take_the_generic_route(self) -> None:
+        cases = (
+            ("sqlite", "CREATE TABLE people (id INTEGER)"),
+            (
+                "sqlite",
+                (
+                    "CREATE TABLE active_people AS "
+                    "SELECT * FROM people WHERE active = 1"
+                ),
+            ),
+            ("sqlite", "ALTER TABLE people ADD COLUMN active INTEGER"),
+            ("sqlite", "ALTER TABLE people RENAME TO persons"),
+            (
+                "sqlite",
+                (
+                    "CREATE INDEX active_people_idx ON people(id) "
+                    "WHERE active = 1"
+                ),
+            ),
+            (
+                "sqlite",
+                (
+                    "CREATE VIEW active_people AS "
+                    "SELECT * FROM people WHERE active = 1"
+                ),
+            ),
+            ("sqlite", "DROP TABLE people"),
+            ("sqlite", "BEGIN"),
+            ("sqlite", "COMMIT"),
+            ("sqlite", "ROLLBACK"),
+            ("sqlite", "SAVEPOINT probe"),
+            ("sqlite", "PRAGMA table_info(people)"),
+            ("sqlite", "PRAGMA quick_check"),
+            (
+                "sqlite",
+                "EXPLAIN QUERY PLAN SELECT * FROM people WHERE active = 1",
+            ),
+            ("sqlite", "ANALYZE"),
+            ("sqlite", "VACUUM"),
+            ("mysql", "TRUNCATE TABLE people"),
+            ("mysql", "CREATE DATABASE analytics"),
+            ("mysql", "USE analytics"),
+            ("mysql", "SET SESSION sql_mode = 'STRICT_ALL_TABLES'"),
+            ("mysql", "SHOW TABLES"),
+            ("mysql", "DESCRIBE people"),
+            ("postgres", "CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy')"),
+            (
+                "postgres",
+                "COMMENT ON TABLE people IS 'customer records'",
+            ),
+            ("postgres", "SET search_path TO public"),
+            ("postgres", "GRANT SELECT ON TABLE people TO analyst"),
+            ("postgres", "REVOKE SELECT ON TABLE people FROM analyst"),
+            (
+                "postgres",
+                (
+                    "MERGE INTO people AS p USING updates AS u ON p.id = u.id "
+                    "WHEN MATCHED THEN DELETE"
+                ),
+            ),
+            ("postgres", "CALL refresh_people(1)"),
+            ("postgres", "COPY people (id, name) FROM STDIN"),
+            (
+                "mysql",
+                (
+                    "CREATE TABLE people ("
+                    "id BIGINT AUTO_INCREMENT PRIMARY KEY, name TEXT)"
+                ),
+            ),
+        )
+        self.assertEqual(len(cases), 31)
+        for dialect, sql in cases:
+            with self.subTest(dialect=dialect, sql=sql):
+                result = prepare_statement_result(
+                    sql,
+                    source_dialect=dialect,
+                    target_dialect=dialect,
+                )
+
+                self.assertEqual(result["success"], True, result["msg"])
+                self.assertEqual(
+                    set(result),
+                    {"success", "warnings", "msg", "sql_fingerprint"},
+                )
+
+    def test_generic_route_does_not_run_extended_preparation(self) -> None:
+        with patch(
+            "sqlglot_experiments.statement_api._prepare_statement"
+        ) as extended_pipeline:
+            result = prepare_statement_result(
+                "CREATE VIEW active_people AS "
+                "SELECT * FROM people WHERE active = ?",
+                source_dialect="sqlite",
+                target_dialect="sqlite",
+            )
+
+        self.assertEqual(result["success"], True)
+        extended_pipeline.assert_not_called()
+
+    def test_generic_fingerprint_is_stable_and_route_specific(self) -> None:
+        def fingerprint(*, target_dialect: str) -> str:
+            result = prepare_statement_result(
+                "CREATE TABLE people (id INTEGER)",
+                source_dialect="sqlite",
+                target_dialect=target_dialect,
+            )
+            self.assertEqual(result["success"], True)
+            return cast(AcceptedStatement, result)["sql_fingerprint"]
+
+        sqlite_fingerprint = fingerprint(target_dialect="sqlite")
+
+        self.assertEqual(
+            sqlite_fingerprint,
+            fingerprint(target_dialect="sqlite"),
+        )
+        self.assertNotEqual(
+            sqlite_fingerprint,
+            fingerprint(target_dialect="postgres"),
         )
 
     def test_malformed_statement_returns_our_controlled_failure(self) -> None:
         result = prepare_statement_result(
             "SELECT FROM",
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "success": False,
+                "warnings": False,
+                "msg": "failure: invalid SQL syntax",
+            },
+        )
+
+    def test_gibberish_returns_our_controlled_failure(self) -> None:
+        result = prepare_statement_result(
+            "srerlct woof where",
             source_dialect="sqlite",
             target_dialect="sqlite",
         )

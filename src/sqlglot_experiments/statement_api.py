@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import lru_cache
+from hashlib import sha256
 from typing import Literal, TypedDict, cast, overload
 
 from sqlglot import Dialect, exp, parse
@@ -20,6 +22,7 @@ from sqlglot_experiments.dialect_adapters import generate_target_sql, parsing_di
 from sqlglot_experiments.source_parameters import (
     Binding,
     InputBindings,
+    ParameterOccurrence,
     ParameterPlan,
     ParameterPlanningError,
     plan_source_parameters,
@@ -33,6 +36,9 @@ from sqlglot_experiments.where_fields import (
 
 StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE"]
 _DEFAULT_LRU_CACHE_SIZE = 128
+_GENERIC_FINGERPRINT_ALGORITHM = (
+    "sqlglot-experiments/generic-source-fingerprint/v1"
+)
 
 
 class Analysis(TypedDict):
@@ -50,7 +56,11 @@ class PreparedStatement(ApiSuccessEnvelope):
     analysis: Analysis
 
 
-PreparationResult = PreparedStatement | ApiFailureEnvelope
+class AcceptedStatement(ApiSuccessEnvelope):
+    sql_fingerprint: str
+
+
+PreparationResult = PreparedStatement | AcceptedStatement | ApiFailureEnvelope
 
 
 class StatementPreparationError(ValueError):
@@ -59,10 +69,6 @@ class StatementPreparationError(ValueError):
 
 class BindingCountError(StatementPreparationError):
     """Caller bindings cannot resolve every required source parameter slot."""
-
-
-class UnsupportedStatementError(StatementPreparationError):
-    """The SQL statement is outside the prototype's DML contract."""
 
 
 class LruCacheConfigurationError(ValueError):
@@ -133,6 +139,18 @@ def prepare_statement(*args: object, **kwargs: object) -> PreparationResult:
             args,
             kwargs,
         )
+        source_dialect = _require_dialect(source_dialect, role="source")
+        target_dialect = _require_dialect(target_dialect, role="target")
+        source_ast = _parse_source_statement(
+            sql,
+            source_dialect=source_dialect,
+        )
+        if _extended_statement_type(source_ast) is None:
+            return _accept_statement(
+                sql,
+                source_dialect=source_dialect,
+                target_dialect=target_dialect,
+            )
         return _prepare_statement(
             sql,
             bindings=bindings,
@@ -232,6 +250,70 @@ def _validate_public_call(
         source_dialect,
         target_dialect,
     )
+
+
+def _parse_source_statement(
+    sql: str,
+    *,
+    source_dialect: str,
+) -> exp.Expr:
+    """Parse once for routing without resolving or transforming bindings."""
+    try:
+        _, occurrences = source_parameter_structure(
+            sql,
+            source_dialect=source_dialect,
+            target_dialect=source_dialect,
+        )
+    except ParameterPlanningError as error:
+        raise BindingCountError(str(error)) from error
+
+    tagged_sql = _tag_parameter_occurrences(sql, occurrences=occurrences)
+    return _parse_single_statement(
+        tagged_sql,
+        source_dialect=source_dialect,
+        target_dialect=source_dialect,
+    )
+
+
+def _tag_parameter_occurrences(
+    sql: str,
+    *,
+    occurrences: tuple[ParameterOccurrence, ...],
+) -> str:
+    """Give source placeholders parser-safe identities for AST routing only."""
+    marker_prefix = _unused_marker_prefix(sql, kind="routing")
+    parts: list[str] = []
+    cursor = 0
+    for index, occurrence in enumerate(occurrences):
+        parts.extend(
+            (sql[cursor : occurrence.start], f":{marker_prefix}{index}")
+        )
+        cursor = occurrence.end + 1
+    parts.append(sql[cursor:])
+    return "".join(parts)
+
+
+def _accept_statement(
+    sql: str,
+    *,
+    source_dialect: str,
+    target_dialect: str,
+) -> AcceptedStatement:
+    payload = json.dumps(
+        {
+            "algorithm": _GENERIC_FINGERPRINT_ALGORITHM,
+            "source_dialect": source_dialect,
+            "sql": sql,
+            "target_dialect": target_dialect,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    status = success_envelope()
+    return {
+        **status,
+        "sql_fingerprint": sha256(payload.encode()).hexdigest(),
+    }
 
 
 def _require_public_dialect(dialect: object, *, role: str) -> str:
@@ -486,8 +568,6 @@ def _hardcoded_warning(count: int) -> str:
 def _failure_reason(error: StatementPreparationError | SqlglotError) -> str:
     if isinstance(error, BindingCountError):
         reason = f"bindings: {error}"
-    elif isinstance(error, UnsupportedStatementError):
-        reason = f"unsupported statement: {error}"
     elif isinstance(error, ParseError):
         reason = "invalid SQL syntax"
     elif isinstance(error, TokenError):
@@ -542,6 +622,13 @@ def _statement_type(
     source_dialect: str,
     target_dialect: str,
 ) -> StatementType:
+    statement_type = _extended_statement_type(statement)
+    if statement_type is not None:
+        return statement_type
+    raise RuntimeError("generic SQL entered the extended preparation pipeline")
+
+
+def _extended_statement_type(statement: exp.Expr) -> StatementType | None:
     if isinstance(statement, exp.Query):
         return "SELECT"
     if isinstance(statement, exp.Insert):
@@ -550,9 +637,7 @@ def _statement_type(
         return "UPDATE"
     if isinstance(statement, exp.Delete):
         return "DELETE"
-    raise UnsupportedStatementError(
-        "only SELECT, INSERT, UPDATE, and DELETE statements are supported"
-    )
+    return None
 
 
 def _tag_source_placeholders(

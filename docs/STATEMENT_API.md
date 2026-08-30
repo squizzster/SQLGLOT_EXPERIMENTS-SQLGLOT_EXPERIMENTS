@@ -17,10 +17,19 @@ set_lru_cache_size(size: int | None = None) -> ApiEnvelope
 SQL and both dialects are semantically required. Their `None` defaults allow
 omission to enter the public boundary and return a controlled failure envelope
 instead of raising Python's argument-binding `TypeError`. `bindings` is omitted
-when the input has no placeholders. Otherwise it resolves values through the
-declared source dialect's logical parameter slots. Every recognised outcome
-follows the [public API envelope](API_ENVELOPE.md). A successful replacement
-returns one compact, preparation-complete package:
+when DML input has no placeholders. Otherwise the extended DML route resolves
+values through the declared source dialect's logical parameter slots. Every
+recognised outcome follows the [public API envelope](API_ENVELOPE.md).
+
+`prepare_statement` first requires SQLGlot to parse exactly one source-dialect
+AST. It then has two fixed success routes:
+
+| Source AST | Result |
+|---|---|
+| `SELECT`, `INSERT`, `UPDATE`, or `DELETE` | Complete extended preparation package |
+| Any other AST accepted by SQLGlot | Generic acceptance envelope and source fingerprint |
+
+A successful extended replacement returns:
 
 ```python
 {
@@ -39,6 +48,25 @@ returns one compact, preparation-complete package:
     },
 }
 ```
+
+A parsed non-DML statement returns exactly:
+
+```python
+{
+    "success": True,
+    "warnings": False,
+    "msg": "success: ok",
+    "sql_fingerprint": "<64-character SHA-256>",
+}
+```
+
+The generic route stops after source parsing and identification. It does not
+resolve binding values, lift literals, generate target SQL, reparse a target
+AST, extract `where_fields`, or enter the prepared-structure LRU. Its
+`sql_fingerprint` covers the exact source SQL and normalized source/target
+dialect route. It is therefore a stable identity for that accepted input, not
+the value-independent DML fingerprint described below. A sequence or mapping
+passed as `bindings` is accepted but not interpreted on this route.
 
 SQL requiring no replacement returns `success: True`, `warnings: False`, and
 `msg: "success: ok"`. Failure returns only:
@@ -69,10 +97,16 @@ failures have library-owned messages, including:
 | Unknown keyword | `failure: unexpected argument: <name>` |
 | Invalid or mismatched bindings | `failure: bindings: <compact reason>` |
 
-Empty or multiple statements, unsupported statement types, malformed SQL,
-unsupported placeholder forms, and target-rendering failures also return this
-same fixed failure envelope. An unexpected internal defect raises an exception;
-it is not misreported as a recognised caller failure.
+Empty or multiple statements and malformed SQL return this same fixed failure
+envelope. Unsupported placeholder forms, binding failures, and target-rendering
+failures apply to the extended DML route. An unexpected internal defect raises
+an exception; it is not misreported as a recognised caller failure.
+
+Generic success means SQLGlot accepted one AST using the declared source
+dialect. It does not prove that every SQL implementation would consider the
+text valid, nor can it accept syntax that the installed SQLGlot version cannot
+parse. SQLGlot fallback `Command` ASTs are accepted because this route does not
+transform or render them.
 
 Returned bindings are native Python values in generated-target-placeholder
 order. This may differ from source order when SQLGlot rewrites a construct; for
@@ -161,10 +195,11 @@ unchanged:
 
 ## Process-local structure cache
 
-Successful statement structures use Python's built-in LRU cache, with 128
-entries as the default limit. The cache is local to the Python process: callers
-in one process share it, separate Python processes have independent caches,
-and a process restart restores the 128-entry default with an empty cache.
+Successful extended DML structures use Python's built-in LRU cache, with 128
+entries as the default limit. Generic accepted statements do not use this
+cache. The cache is local to the Python process: callers in one process share
+it, separate Python processes have independent caches, and a process restart
+restores the 128-entry default with an empty cache.
 
 The immutable cache key consists of the normalized source dialect, normalized
 target dialect, exact input SQL, and ordered source binding names. Anonymous
@@ -174,10 +209,9 @@ fingerprint, statement type, WHERE fields, analysis, status, and binding route.
 Each call resolves that route against its current binding values and returns a
 fresh envelope with fresh mutable containers.
 
-Malformed SQL, unsupported statements, and invalid binding calls are not
-retained as cache entries. Hardcoded literals remain part of the exact input
-SQL and its generated binding route. Cache behavior does not add fields to the
-public envelope.
+Malformed SQL and invalid DML binding calls are not retained as cache entries.
+Hardcoded literals remain part of the exact input SQL and its generated binding
+route. Cache behavior does not add fields to the public envelope.
 
 SQLite accepts sequences for native slot numbering and mappings for named
 parameters. This covers `?`, `?NNN`, `:name`, `@name`, `$name`, repeated names,

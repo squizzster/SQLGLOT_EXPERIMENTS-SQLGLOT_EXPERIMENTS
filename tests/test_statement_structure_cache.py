@@ -207,7 +207,7 @@ class StatementStructureCacheTests(unittest.TestCase):
                     128,
                 )
 
-    def test_invalid_calls_do_not_leave_cached_structures(self) -> None:
+    def test_non_prepared_calls_do_not_reach_the_structure_cache(self) -> None:
         for _ in range(2):
             result = prepare_statement(
                 "SELECT FROM",
@@ -219,10 +219,29 @@ class StatementStructureCacheTests(unittest.TestCase):
         parse_failure = statement_api._prepare_statement_structure.cache_info()
         self.assertEqual(
             (parse_failure.hits, parse_failure.misses, parse_failure.currsize),
-            (0, 2, 0),
+            (0, 0, 0),
         )
 
-        statement_api._prepare_statement_structure.cache_clear()
+        for _ in range(2):
+            result = prepare_statement(
+                "CREATE TABLE example (id INTEGER)",
+                source_dialect="sqlite",
+                target_dialect="sqlite",
+            )
+            self.assertEqual(result["success"], True)
+
+        generic_acceptance = (
+            statement_api._prepare_statement_structure.cache_info()
+        )
+        self.assertEqual(
+            (
+                generic_acceptance.hits,
+                generic_acceptance.misses,
+                generic_acceptance.currsize,
+            ),
+            (0, 0, 0),
+        )
+
         result = prepare_statement(
             "SELECT * FROM people WHERE id = ?",
             bindings=[],

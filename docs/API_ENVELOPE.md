@@ -27,9 +27,9 @@ check `success` before using them.
 
 Recognised caller mistakes and SQL-processing failures return the same fixed
 three-field failure envelope. This includes malformed Python call shapes,
-missing or invalid arguments, binding failures, unsupported statements, and
-SQL parsing or target-rendering failures. Failure envelopes never gain
-condition-specific fields.
+missing or invalid arguments, binding failures on the extended preparation
+route, and SQL parsing or target-rendering failures. Failure envelopes never
+gain condition-specific fields.
 
 Unexpected internal defects raise an exception instead of being disguised as
 a caller failure. Internal and external exception details never become API
@@ -39,3 +39,8 @@ A warning identifies a reportable preparation intervention, currently lifting
 hardcoded values into bindings. Normal target-dialect rendering and formatting
 are not warnings. Fingerprinting works on a copied AST and adds its digest to
 the success payload without altering generated SQL or warning state.
+
+SQLGlot-accepted statements outside the extended `SELECT`, `INSERT`, `UPDATE`,
+and `DELETE` route return the normal three-field success envelope plus only a
+`sql_fingerprint`. This is syntactic source acceptance, not preparation or an
+execution-readiness claim.

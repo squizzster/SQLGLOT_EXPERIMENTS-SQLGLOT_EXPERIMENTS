@@ -4,9 +4,11 @@ from sqlglot_experiments.api_envelope import (
     ApiSuccessEnvelope,
 )
 from sqlglot_experiments.statement_api import (
+    AcceptedStatement,
     Analysis,
     Binding,
     InputBindings,
+    PreparationFailure,
     PreparationResult,
     PreparedStatement,
     StatementType,
@@ -16,12 +18,14 @@ from sqlglot_experiments.statement_api import (
 from sqlglot_experiments.where_fields import WhereField
 
 __all__ = [
+    "AcceptedStatement",
     "Analysis",
     "ApiEnvelope",
     "ApiFailureEnvelope",
     "ApiSuccessEnvelope",
     "Binding",
     "InputBindings",
+    "PreparationFailure",
     "PreparationResult",
     "PreparedStatement",
     "StatementType",

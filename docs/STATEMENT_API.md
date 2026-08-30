@@ -36,6 +36,7 @@ A successful extended replacement returns:
     "success": True,
     "warnings": True,
     "msg": "warnings: replaced 1 hardcoded value with placeholder",
+    "envelope_type": "prepared",
     "sql_fingerprint": "<64-character SHA-256>",
     "dialect": ["sqlite", "sqlite"],
     "statement_type": "SELECT",
@@ -56,6 +57,7 @@ A parsed non-DML statement returns exactly:
     "success": True,
     "warnings": False,
     "msg": "success: ok",
+    "envelope_type": "accepted",
     "sql_fingerprint": "<64-character SHA-256>",
 }
 ```
@@ -76,11 +78,14 @@ SQL requiring no replacement returns `success: True`, `warnings: False`, and
     "success": False,
     "warnings": False,
     "msg": "failure: <compact library-owned reason>",
+    "envelope_type": "failure",
 }
 ```
 
-The fixed envelope does not gain error-specific fields. Known public-call
-failures have library-owned messages, including:
+`envelope_type` is always present and has exactly one of three values:
+`prepared`, `accepted`, or `failure`. The fixed failure envelope does not gain
+error-specific fields. Known public-call failures have library-owned messages,
+including:
 
 | Situation | `msg` |
 |---|---|

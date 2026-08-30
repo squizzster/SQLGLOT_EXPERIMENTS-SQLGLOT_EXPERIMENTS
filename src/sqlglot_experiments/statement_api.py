@@ -47,6 +47,7 @@ class Analysis(TypedDict):
 
 
 class PreparedStatement(ApiSuccessEnvelope):
+    envelope_type: Literal["prepared"]
     sql_fingerprint: str
     dialect: list[str]
     statement_type: StatementType
@@ -57,10 +58,15 @@ class PreparedStatement(ApiSuccessEnvelope):
 
 
 class AcceptedStatement(ApiSuccessEnvelope):
+    envelope_type: Literal["accepted"]
     sql_fingerprint: str
 
 
-PreparationResult = PreparedStatement | AcceptedStatement | ApiFailureEnvelope
+class PreparationFailure(ApiFailureEnvelope):
+    envelope_type: Literal["failure"]
+
+
+PreparationResult = PreparedStatement | AcceptedStatement | PreparationFailure
 
 
 class StatementPreparationError(ValueError):
@@ -158,7 +164,7 @@ def prepare_statement(*args: object, **kwargs: object) -> PreparationResult:
             target_dialect=target_dialect,
         )
     except (StatementPreparationError, SqlglotError) as error:
-        return failure_envelope(_failure_reason(error))
+        return _preparation_failure(_failure_reason(error))
 
 
 @overload
@@ -312,7 +318,15 @@ def _accept_statement(
     status = success_envelope()
     return {
         **status,
+        "envelope_type": "accepted",
         "sql_fingerprint": sha256(payload.encode()).hexdigest(),
+    }
+
+
+def _preparation_failure(reason: str) -> PreparationFailure:
+    return {
+        **failure_envelope(reason),
+        "envelope_type": "failure",
     }
 
 
@@ -546,6 +560,7 @@ def _materialize_prepared_statement(
         "success": True,
         "warnings": structure.warnings,
         "msg": structure.msg,
+        "envelope_type": "prepared",
         "sql_fingerprint": structure.sql_fingerprint,
         "dialect": list(structure.dialect),
         "statement_type": structure.statement_type,

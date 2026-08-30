@@ -44,8 +44,12 @@ def assert_failure(
 ) -> None:
     testcase.assertEqual(result["success"], False)
     testcase.assertEqual(result["warnings"], False)
+    testcase.assertEqual(result["envelope_type"], "failure")
     testcase.assertTrue(result["msg"].startswith(message_prefix), result["msg"])
-    testcase.assertEqual(set(result), {"success", "warnings", "msg"})
+    testcase.assertEqual(
+        set(result),
+        {"success", "warnings", "msg", "envelope_type"},
+    )
 
 
 def call_public_api(*args: object, **kwargs: object) -> PreparationResult:
@@ -71,6 +75,7 @@ class StatementApiTests(unittest.TestCase):
                 "success": True,
                 "warnings": True,
                 "msg": "warnings: replaced 1 hardcoded value with placeholder",
+                "envelope_type": "prepared",
                 "sql_fingerprint": ANY,
                 "dialect": ["sqlite", "sqlite"],
                 "statement_type": "SELECT",
@@ -237,6 +242,7 @@ class StatementApiTests(unittest.TestCase):
                 "success": True,
                 "warnings": False,
                 "msg": "success: ok",
+                "envelope_type": "prepared",
                 "sql_fingerprint": ANY,
                 "dialect": ["sqlite", "sqlite"],
                 "statement_type": "SELECT",
@@ -535,6 +541,7 @@ class StatementApiTests(unittest.TestCase):
                 "success": False,
                 "warnings": False,
                 "msg": "failure: bindings: bindings must be a sequence or mapping of values",
+                "envelope_type": "failure",
             },
         )
 
@@ -587,6 +594,7 @@ class StatementApiTests(unittest.TestCase):
                 "success": True,
                 "warnings": False,
                 "msg": "success: ok",
+                "envelope_type": "accepted",
                 "sql_fingerprint": ANY,
             },
         )
@@ -675,8 +683,15 @@ class StatementApiTests(unittest.TestCase):
                 self.assertEqual(result["success"], True, result["msg"])
                 self.assertEqual(
                     set(result),
-                    {"success", "warnings", "msg", "sql_fingerprint"},
+                    {
+                        "success",
+                        "warnings",
+                        "msg",
+                        "envelope_type",
+                        "sql_fingerprint",
+                    },
                 )
+                self.assertEqual(result["envelope_type"], "accepted")
 
     def test_generic_route_does_not_run_extended_preparation(self) -> None:
         with patch(
@@ -726,6 +741,7 @@ class StatementApiTests(unittest.TestCase):
                 "success": False,
                 "warnings": False,
                 "msg": "failure: invalid SQL syntax",
+                "envelope_type": "failure",
             },
         )
 
@@ -742,6 +758,7 @@ class StatementApiTests(unittest.TestCase):
                 "success": False,
                 "warnings": False,
                 "msg": "failure: invalid SQL syntax",
+                "envelope_type": "failure",
             },
         )
 
@@ -759,6 +776,7 @@ class StatementApiTests(unittest.TestCase):
                 "success": False,
                 "warnings": False,
                 "msg": "failure: invalid SQL tokens",
+                "envelope_type": "failure",
             },
         )
 
@@ -884,7 +902,12 @@ class StatementApiTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(
                     call_public_api(*args, **kwargs),
-                    {"success": False, "warnings": False, "msg": message},
+                    {
+                        "success": False,
+                        "warnings": False,
+                        "msg": message,
+                        "envelope_type": "failure",
+                    },
                 )
 
     def test_sql_may_be_supplied_by_keyword(self) -> None:

@@ -26,6 +26,7 @@ A successful hardcoded-value replacement returns:
     "success": True,
     "warnings": True,
     "msg": "warnings: replaced 1 hardcoded value with placeholder",
+    "envelope_type": "prepared",
     "sql_fingerprint": "<64-character SHA-256>",
     "dialect": ["sqlite", "sqlite"],
     "statement_type": "SELECT",
@@ -46,6 +47,7 @@ A parsed statement outside the extended DML route returns only:
     "success": True,
     "warnings": False,
     "msg": "success: ok",
+    "envelope_type": "accepted",
     "sql_fingerprint": "<64-character SHA-256>",
 }
 ```
@@ -53,7 +55,7 @@ A parsed statement outside the extended DML route returns only:
 This generic result confirms one source AST was accepted. It does not generate
 target SQL, process bindings, transform literals, or claim engine readiness.
 Malformed SQL such as `srerlct woof where` still returns the fixed failure
-envelope.
+envelope with `envelope_type: "failure"`.
 
 Failures contain only the standard envelope; they never contain fake executable
 SQL or bindings. Messages are owned by this library, single-line, and limited to

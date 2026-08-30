@@ -13,12 +13,13 @@ checks, and explicit limitations while breaking changes remain expected.
 
 The library exposes two public API commands. `prepare_statement` accepts
 exactly one SQLGlot-parsable source statement plus explicit source and target
-dialects. `SELECT`, `INSERT`, `UPDATE`, and `DELETE` use the extended preparation
-pipeline; every other parsed AST receives a compact generic success envelope
-and fingerprint without transformation. Every recognised outcome carries the
-fixed `success`, `warnings`, and `msg` envelope. `set_lru_cache_size` configures
-the library's prepared-DML structure cache in the calling Python process and
-returns the same fixed envelope.
+dialects. `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, and `REPLACE` use one
+extended preparation pipeline; every other parsed AST receives a compact
+generic success envelope and fingerprint without transformation. `WITH` is a
+clause on the effective operation, never a synthetic statement type. Every
+recognised outcome carries the fixed `success`, `warnings`, and `msg` envelope.
+`set_lru_cache_size` configures the library's prepared-statement structure
+cache in the calling Python process and returns the same fixed envelope.
 A successful hardcoded-value replacement returns:
 
 ```python
@@ -40,7 +41,7 @@ A successful hardcoded-value replacement returns:
 }
 ```
 
-A parsed statement outside the extended DML route returns only:
+A parsed statement outside the extended preparation route returns only:
 
 ```python
 {
@@ -63,16 +64,17 @@ SQL or bindings. Messages are owned by this library, single-line, and limited to
 failure messages instead of Python argument-binding exceptions. Unexpected
 internal defects remain exceptions.
 
-SQLite execution is verified for all four statement types, the retained complex
-fixture, and 590 torture cases with no genuine failures. Hardcoded and
-already-parameterized inputs converge to the same package shape. The demo
-consumer deliberately owns database execution; the library does not connect to
-a database.
+SQLite execution is verified for the original four operations, ten REPLACE
+scenarios, the retained complex fixture, and 590 torture cases with no genuine
+failures. Seven retained MERGE scenarios are compared with direct execution on
+DuckDB. Hardcoded and already-parameterized inputs converge to the same package
+shape. The demo consumer deliberately owns database execution; the library
+does not connect to a database.
 
 Internal statement fingerprinting produces the public success-payload field
-`sql_fingerprint`: a value-independent SHA-256 for `SELECT`, `INSERT`, `UPDATE`,
-and `DELETE`. The fingerprint function itself remains private, and the
-source-to-target dialect route remains part of the fingerprint identity.
+`sql_fingerprint`: a value-independent SHA-256 for all six prepared operation
+types. The fingerprint function itself remains private, and the source-to-target
+dialect route remains part of the fingerprint identity.
 
 Successful packages also include `where_fields`, every distinct field beneath
 `WHERE` nodes as SQL-shaped strings. The fixed forms are `field`,
@@ -89,6 +91,17 @@ caller binding values remain outside the cache. Hits resolve the cached binding
 route with current values and return a fresh public envelope. Separate Python
 processes therefore have separate library caches.
 
+REPLACE is configured for SQLite, MySQL, and DuckDB. MERGE is configured for
+PostgreSQL, DuckDB, Snowflake, T-SQL, BigQuery, Databricks, and Oracle. Common
+forms may cross configured dialects; dialect-only clauses must remain
+representable at the target. Narrow adapters preserve MySQL REPLACE forms,
+DuckDB `INSERT BY NAME`, Snowflake `ALL BY NAME`, and T-SQL's required MERGE
+terminator. Structural validation and a target-AST semantic signature prevent
+SQLGlot's permissive parser or generator from silently dropping these forms.
+Configured support covers the tested common structural route, not every vendor
+extension; unadapted syntax returns the fixed failure envelope rather than a
+lossy package.
+
 ## Design notes
 
 - [Public API envelope](docs/API_ENVELOPE.md)
@@ -103,11 +116,20 @@ uv sync
 uv run python demo/sqlite_consumer.py
 uv run python demo/sqlite_torture_consumer.py
 uv run python -m unittest discover -v
-uvx ruff check src/sqlglot_experiments demo tests
-uv run --with pyright pyright src/sqlglot_experiments demo tests
+uvx ruff check src/sqlglot_experiments demo tests \
+  experiments/replace_statement_support \
+  experiments/merge_with_statement_support
+uv run --with pyright pyright src/sqlglot_experiments demo tests \
+  experiments/replace_statement_support \
+  experiments/merge_with_statement_support
 
 # Retained experiments
 uv run python experiments/native_api_showcase.py
 uv run python -m experiments.sql_statement_fingerprinting.showcase
 uv run python -m unittest experiments.sql_statement_fingerprinting.test_fingerprint
+uv run python -m experiments.replace_statement_support.run_experiment
+uv run --with duckdb python -m experiments.merge_with_statement_support.run_experiment
+uv run --with duckdb python -m unittest -v \
+  experiments.replace_statement_support.test_experiment \
+  experiments.merge_with_statement_support.test_experiment
 ```

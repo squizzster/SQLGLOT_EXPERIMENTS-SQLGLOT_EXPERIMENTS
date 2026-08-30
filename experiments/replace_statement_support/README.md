@@ -1,17 +1,23 @@
 # REPLACE statement support experiment
 
-## Question
+## Status
+
+Folded into the main library on the `proto/replace-merge-with-support` change.
+The original prototype helpers remain in Git history; the runner and tests now
+exercise the integrated public API directly.
+
+## Original question
 
 Can `REPLACE` become a fifth extended statement family by adding a narrow
 SQLGlot dialect adapter and then reusing the existing INSERT preparation
 pipeline?
 
-This experiment does not modify main library code. It temporarily installs
-experimental SQLite/MySQL tokenizers and parsers that produce an `exp.Insert`
-with `alternative="REPLACE"`, a MySQL generator that emits native `REPLACE`,
-and internal statement classification as `REPLACE`. All parameter planning,
-literal lifting, binding ordering, WHERE-field extraction, fingerprinting,
-caching, envelopes, and SQLite execution use the real library.
+The experiment proposed SQLite/MySQL tokenizers and parsers that produce an
+`exp.Insert` with `alternative="REPLACE"`, a MySQL generator that emits native
+`REPLACE`, and internal statement classification as `REPLACE`. That boundary is
+now integrated. Parameter planning, literal lifting, binding ordering,
+WHERE-field extraction, fingerprinting, caching, envelopes, and execution
+remain one authoritative library pipeline.
 
 ## Run
 
@@ -32,18 +38,17 @@ prepared package on independently initialized databases, including primary-key
 replacement, unique-key replacement, and one input row conflicting with two
 existing rows.
 
-## Initial boundary
+## Implemented boundary
 
-`exp.Replace` is not involved; it is the scalar string function. The proposed
+`exp.Replace` is not involved; it is the scalar string function. The integrated
 adapter removes statement-level REPLACE from SQLGlot's fallback-command token
 set and parses it through the INSERT grammar while preserving explicit REPLACE
 identity.
 
 PostgreSQL rendering is deliberately rejected because there is no schema-free
-equivalent. MySQL's singular `VALUE` spelling is retained as an expected parser
-limitation for evaluation. MySQL row constructors are retained as an
-observation because their wrapped values are outside the current literal-lift
-policy.
+equivalent. MySQL's singular `VALUE` and `VALUES ROW(...)` forms now have narrow
+parser adapters. MySQL SET syntax is rendered back as SET so its right-hand
+column semantics are not silently changed to VALUES.
 
 ## Observations
 
@@ -60,28 +65,24 @@ Observed with SQLGlot 30.17.0:
   text inside strings/comments retained correct binding ownership and order.
 - SQLite-to-MySQL rendered native `REPLACE`; MySQL-to-SQLite rendered `INSERT OR
   REPLACE`; PostgreSQL returned the controlled target-rendering failure.
-- MySQL `SET`, `PARTITION`, `TABLE`, optional `INTO`, CTE prefix,
-  `LOW_PRIORITY`, and `DELAYED` forms prepared structurally. No MySQL server was
-  used, so this is AST/rendering evidence rather than engine validation.
+- MySQL `SET`, `PARTITION`, `TABLE`, optional `INTO`, `LOW_PRIORITY`, and
+  `DELAYED` forms prepare structurally. The official CTE placement
+  `REPLACE ... WITH ... SELECT` is supported; the invalid leading
+  `WITH ... REPLACE` form fails. No MySQL server was used, so this is
+  AST/rendering evidence rather than engine validation.
 - MySQL qmark inputs remained controlled binding failures, consistent with the
   current library's separation of SQL dialect from driver parameter style.
-- MySQL's valid singular `VALUE` spelling remained a parse failure.
-- MySQL `VALUES ROW(...)` was an unsafe false success: SQLGlot rendered wrapped
-  row expressions and the current lift policy returned no bindings. This form
-  must be rejected or specifically adapted before public support.
+- MySQL's valid singular `VALUE` spelling and `VALUES ROW(...)` both prepare,
+  with row-constructor values entering the normal binding pipeline.
+- The valid `DEFAULT(column)` expression inside MySQL REPLACE SET exposes an
+  upstream parse-shape loss and therefore returns a controlled failure.
 - Scalar `REPLACE(value, from, to)` remained a normal expression inside
   `SELECT`; ordinary INSERT and UPDATE classification remained unchanged.
 
 ## Conclusion
 
-REPLACE is mechanically suitable as a fifth extended family. After a narrow
-dialect tokenizer/parser adapter produces an INSERT-family AST with preserved
-REPLACE identity, the existing preparation pipeline works without a parallel
-transformation mechanism.
-
-The implementation boundary must also adapt source placeholder tokenization
-and target marker tokenization because SQLGlot's normal fallback-command token
-collapses the remainder of bare REPLACE. Initial public support should either
-add MySQL singular `VALUE` deliberately or reject it, reject `VALUES ROW(...)`
-until it has execution evidence, and retain controlled failure for targets
-without configured REPLACE semantics.
+REPLACE is now the fifth extended family. A narrow dialect adapter produces an
+INSERT-family AST with preserved REPLACE identity, and the existing preparation
+pipeline handles it without a parallel transformation mechanism. Source and
+target marker tokenization use the same adapter, and unconfigured targets fail
+through the fixed public envelope.

@@ -18,7 +18,12 @@ from sqlglot_experiments.api_envelope import (
     failure_envelope,
     success_envelope,
 )
-from sqlglot_experiments.dialect_adapters import generate_target_sql, parsing_dialect
+from sqlglot_experiments.dialect_adapters import (
+    MySQLReplaceOptimizerHintError,
+    generate_target_sql,
+    parsing_dialect,
+    tokenize_preparation_sql,
+)
 from sqlglot_experiments.source_parameters import (
     Binding,
     InputBindings,
@@ -28,13 +33,22 @@ from sqlglot_experiments.source_parameters import (
     plan_source_parameters,
     source_parameter_structure,
 )
-from sqlglot_experiments.statement_fingerprinting import fingerprint_statement
+from sqlglot_experiments.statement_classification import (
+    StatementClassificationError,
+    StatementType,
+    extended_statement_type,
+    require_extended_statement_type,
+    statement_semantic_signature,
+)
+from sqlglot_experiments.statement_fingerprinting import (
+    FingerprintingError,
+    fingerprint_statement,
+)
 from sqlglot_experiments.where_fields import (
     WhereField,
     extract_where_fields,
 )
 
-StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE"]
 _DEFAULT_LRU_CACHE_SIZE = 128
 _GENERIC_FINGERPRINT_ALGORITHM = (
     "sqlglot-experiments/generic-source-fingerprint/v1"
@@ -163,7 +177,12 @@ def prepare_statement(*args: object, **kwargs: object) -> PreparationResult:
             source_dialect=source_dialect,
             target_dialect=target_dialect,
         )
-    except (StatementPreparationError, SqlglotError) as error:
+    except (
+        StatementPreparationError,
+        StatementClassificationError,
+        FingerprintingError,
+        SqlglotError,
+    ) as error:
         return _preparation_failure(_failure_reason(error))
 
 
@@ -475,6 +494,12 @@ def _build_statement_structure(
         raise StatementPreparationError(
             "target rendering changed the SQL statement type"
         )
+    if statement_semantic_signature(target_ast) != statement_semantic_signature(
+        prepared_ast
+    ):
+        raise StatementPreparationError(
+            "target rendering changed the SQL statement semantics"
+        )
     _require_complete_ast(
         target_ast,
         bindings=merged_bindings,
@@ -580,16 +605,28 @@ def _hardcoded_warning(count: int) -> str:
     return f"replaced {count} hardcoded {value_word} with {placeholder_word}"
 
 
-def _failure_reason(error: StatementPreparationError | SqlglotError) -> str:
+def _failure_reason(
+    error: (
+        StatementPreparationError
+        | StatementClassificationError
+        | FingerprintingError
+        | SqlglotError
+    ),
+) -> str:
     if isinstance(error, BindingCountError):
         reason = f"bindings: {error}"
     elif isinstance(error, ParseError):
         reason = "invalid SQL syntax"
+    elif isinstance(error, MySQLReplaceOptimizerHintError):
+        reason = str(error)
     elif isinstance(error, TokenError):
         reason = "invalid SQL tokens"
     elif isinstance(error, UnsupportedError):
         reason = "target dialect cannot render the statement"
-    elif isinstance(error, StatementPreparationError):
+    elif isinstance(
+        error,
+        (StatementPreparationError, StatementClassificationError, FingerprintingError),
+    ):
         reason = str(error)
     else:
         reason = "SQLGlot processing failed"
@@ -637,22 +674,11 @@ def _statement_type(
     source_dialect: str,
     target_dialect: str,
 ) -> StatementType:
-    statement_type = _extended_statement_type(statement)
-    if statement_type is not None:
-        return statement_type
-    raise RuntimeError("generic SQL entered the extended preparation pipeline")
+    return require_extended_statement_type(statement, dialect=source_dialect)
 
 
 def _extended_statement_type(statement: exp.Expr) -> StatementType | None:
-    if isinstance(statement, exp.Query):
-        return "SELECT"
-    if isinstance(statement, exp.Insert):
-        return "INSERT"
-    if isinstance(statement, exp.Update):
-        return "UPDATE"
-    if isinstance(statement, exp.Delete):
-        return "DELETE"
-    return None
+    return extended_statement_type(statement)
 
 
 def _tag_source_placeholders(
@@ -763,7 +789,10 @@ def _bindings_in_target_order(
     )
     marker_order = [
         token.text
-        for token in Dialect.get_or_raise(target_dialect).tokenize(marked_sql)
+        for token in tokenize_preparation_sql(
+            marked_sql,
+            dialect=target_dialect,
+        )
         if token.text in marker_values
     ]
     if set(marker_order) != set(marker_values):
@@ -950,16 +979,28 @@ def _insert_field_key(
     source_dialect: str,
     target_dialect: str,
 ) -> set[tuple[str, ...]] | None:
-    if position is None or not isinstance(row.parent, exp.Values):
+    if position is None:
         return None
-    values = row.parent
-    if not isinstance(values.parent, exp.Insert):
+
+    insert: exp.Insert | None = None
+    merge_target: exp.Table | None = None
+    if isinstance(row.parent, exp.Values) and isinstance(row.parent.parent, exp.Insert):
+        insert = row.parent.parent
+    elif isinstance(row.parent, exp.Insert) and row is row.parent.expression:
+        candidate = row.parent
+        merge = candidate.find_ancestor(exp.Merge)
+        if isinstance(merge, exp.Merge) and isinstance(merge.this, exp.Table):
+            insert = candidate
+            merge_target = merge.this
+    if insert is None:
         return None
-    insert = values.parent
 
     table_key: tuple[str, ...] = ()
     columns: list[exp.Expr] = []
-    if isinstance(insert.this, exp.Schema):
+    if merge_target is not None and isinstance(insert.this, exp.Tuple):
+        columns = insert.this.expressions
+        table_key = tuple(identifier.name for identifier in merge_target.parts)
+    elif isinstance(insert.this, exp.Schema):
         columns = insert.this.expressions
         if isinstance(insert.this.this, exp.Table):
             table_key = tuple(identifier.name for identifier in insert.this.this.parts)

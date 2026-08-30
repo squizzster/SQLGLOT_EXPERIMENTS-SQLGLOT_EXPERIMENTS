@@ -1,15 +1,21 @@
 # MERGE and WITH statement-support experiment
 
-## Question
+## Status
+
+Folded into the main library on the `proto/replace-merge-with-support` change.
+The original prototype helpers remain in Git history; the runner and tests now
+exercise the integrated public API directly.
+
+## Original question
 
 Can `MERGE` use the extended preparation pipeline, and should `WITH` become a
 separate public statement type?
 
-This experiment does not modify the main library. It temporarily classifies
-SQLGlot's real `exp.Merge` root as `MERGE` and adds one narrow association for
-hardcoded values in a MERGE INSERT action. The existing parameter planning,
-literal lifting, binding ordering, WHERE-field extraction, target generation,
-fingerprinting, cache, and public envelopes remain authoritative.
+The experiment classified SQLGlot's real `exp.Merge` root as `MERGE` and added
+one narrow association for hardcoded values in a MERGE INSERT action. That
+boundary is now integrated. Existing parameter planning, literal lifting,
+binding ordering, WHERE-field extraction, target generation, fingerprinting,
+cache, and public envelopes remain authoritative.
 
 ## Run
 
@@ -31,13 +37,13 @@ conditional and multiple actions, DO NOTHING, DEFAULT, BY SOURCE/TARGET,
 BY NAME/star actions, RETURNING, source WHERE clauses, CTE prefixes,
 cross-dialect rendering, quoting, malformed SQL, bad bindings, and multiple
 statements. Known-valid DuckDB `INSERT BY NAME` and Snowflake `ALL BY NAME`
-forms are retained specifically to expose SQLGlot parser gaps.
+forms are retained specifically to verify the integrated dialect adapters.
 
 Seven real DuckDB comparisons execute raw and prepared MERGE statements on
 independently initialized databases and compare both returned rows and final
 table state.
 
-## Boundary being tested
+## Implemented boundary
 
 `WITH` is a clause, not a peer root operation in SQLGlot's AST. A parsed
 CTE-prefixed statement remains an `exp.Select`, `exp.Insert`, `exp.Update`,
@@ -45,10 +51,9 @@ CTE-prefixed statement remains an `exp.Select`, `exp.Insert`, `exp.Update`,
 preserves the effective operation in `statement_type`; it does not manufacture
 a `WITH` type that would hide whether the package reads or mutates data.
 
-SQLGlot is a parser/transpiler rather than an engine validator. It can parse
-and render a MERGE while declaring SQLite or MySQL even though those engines do
-not implement standard MERGE. Those two routes are retained as explicitly
-known unsafe observations rather than treated as execution evidence.
+SQLGlot is a parser/transpiler rather than an engine validator. SQLite and
+MySQL MERGE targets are rejected explicitly instead of being retained as
+unsafe parse/render observations.
 
 The experiment also extends WHERE scope discovery only for query nodes beneath
 a MERGE root. This proves that a source-subquery field such as `tenant_id` can
@@ -62,8 +67,8 @@ Observed with SQLGlot 30.17.0 and DuckDB 1.5.5:
 - All 12 valid CTE-prefixed cases entered the extended pipeline under their
   effective `SELECT`, `INSERT`, `UPDATE`, `DELETE`, or `MERGE` root. No package
   had the synthetic statement type `WITH`.
-- MERGE needed only root classification plus a narrow INSERT-action field
-  association to reuse the existing extended pipeline. The full hardcoded
+- MERGE reuses the existing extended pipeline after classification, structural
+  validation, and a narrow INSERT-action field association. The full hardcoded
   PostgreSQL case lifted six values, including both INSERT-action values.
 - Hardcoded and already-parameterized MERGE forms converged to the same
   structural fingerprint.
@@ -71,18 +76,17 @@ Observed with SQLGlot 30.17.0 and DuckDB 1.5.5:
   for raw and prepared SQL.
 - A WHERE field inside a MERGE source query resolved to its physical source as
   `incoming.tenant_id` after scope discovery began at the nested query.
-- SQLGlot rejected valid Snowflake `UPDATE ALL BY NAME` / `INSERT ALL BY NAME`.
-- SQLGlot misparsed valid DuckDB `INSERT BY NAME` as `INSERT (BY AS NAME)` and
-  leniently accepted one incomplete MERGE. Both are unsafe successes that need
-  an adapter or structural rejection before public support.
-- SQLGlot structurally prepared SQLite and MySQL targets even though those
-  engines do not implement standard MERGE. Target capability therefore needs
-  an explicit boundary; parse/render round trips alone are insufficient.
+- Narrow adapters preserve valid Snowflake `UPDATE ALL BY NAME` / `INSERT ALL
+  BY NAME` and DuckDB `INSERT BY NAME` forms.
+- Strict MERGE action parsing and structural validation reject the formerly
+  unsafe incomplete form.
+- Explicit target capability rejects SQLite and MySQL MERGE routes. A semantic
+  signature checks action structure again after target rendering.
 
 ## Conclusion
 
-`MERGE` is suitable as a sixth extended execution family and can reuse the
-authoritative pipeline. It is not an INSERT or UPDATE subtype because one
+`MERGE` is now the sixth extended execution family and reuses the authoritative
+pipeline. It is not an INSERT or UPDATE subtype because one
 statement may conditionally insert, update, and delete.
 
 `WITH` should be supported everywhere it prefixes a supported primary
@@ -91,8 +95,7 @@ operation, but it should not become a seventh `statement_type`. Returning
 SELECT, INSERT, UPDATE, DELETE, MERGE, or REPLACE. The public syntax set can be
 described as those six operations, each with optional WITH/CTE clauses.
 
-Before MERGE is folded into main, the smallest coherent implementation should
-also add MERGE structural validation, nested-query WHERE scope discovery, and
-controlled target capability handling. DuckDB `INSERT BY NAME` and Snowflake
-`ALL BY NAME` must either receive narrow dialect adapters or controlled failure
-until adapted; they must not return a prepared package with changed syntax.
+The integrated implementation includes structural validation, direct
+source-query WHERE scope discovery, controlled target capability, and narrow
+DuckDB/Snowflake adapters. WITH remains a clause and never becomes a parallel
+public pipeline or synthetic statement type.

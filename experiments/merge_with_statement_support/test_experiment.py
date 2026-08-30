@@ -7,7 +7,6 @@ from experiments.merge_with_statement_support.run_experiment import (
     DUCKDB_EXECUTION_CASES,
     MERGE_CASES,
     WITH_CASES,
-    merge_support,
     run_experiment,
 )
 from sqlglot_experiments import prepare_statement
@@ -64,48 +63,41 @@ class MergeWithStatementExperimentTests(unittest.TestCase):
             len(DUCKDB_EXECUTION_CASES),
         )
 
-    def test_sqlglot_does_not_prove_engine_target_support(self) -> None:
+    def test_unconfigured_engine_targets_are_rejected(self) -> None:
         self.assertEqual(
             self.report["summary"]["known_unsupported_target_success_count"],
-            2,
+            0,
         )
 
-    def test_known_parser_edges_remain_visible(self) -> None:
-        self.assertEqual(self.report["summary"]["known_parser_gap_count"], 1)
+    def test_known_parser_edges_are_adapted_or_rejected(self) -> None:
+        self.assertEqual(self.report["summary"]["known_parser_gap_count"], 0)
         self.assertEqual(
             self.report["summary"]["known_unsafe_parse_success_count"],
-            2,
+            0,
         )
 
     def test_hardcoded_and_parameterized_merge_fingerprints_converge(self) -> None:
         self.assertEqual(self.report["summary"]["fingerprint_converges"], True)
 
-    def test_experimental_merge_patch_does_not_escape_context(self) -> None:
+    def test_merge_support_is_stable_across_public_calls(self) -> None:
         sql = (
             "MERGE INTO people AS p USING incoming AS i ON p.id = i.id "
             "WHEN MATCHED THEN UPDATE SET name = 'Fred'"
         )
-        before = prepare_statement(
+        first = prepare_statement(
             sql,
             source_dialect="postgres",
             target_dialect="postgres",
         )
-        with merge_support():
-            during = prepare_statement(
-                sql,
-                source_dialect="postgres",
-                target_dialect="postgres",
-            )
-        after = prepare_statement(
+        second = prepare_statement(
             sql,
             source_dialect="postgres",
             target_dialect="postgres",
         )
 
-        self.assertEqual(before["envelope_type"], "accepted")
-        self.assertEqual(during["envelope_type"], "prepared")
-        self.assertEqual(cast(dict[str, Any], during)["statement_type"], "MERGE")
-        self.assertEqual(after["envelope_type"], "accepted")
+        self.assertEqual(first["envelope_type"], "prepared")
+        self.assertEqual(second["envelope_type"], "prepared")
+        self.assertEqual(cast(dict[str, Any], second)["statement_type"], "MERGE")
 
     def test_existing_with_select_needs_no_experimental_patch(self) -> None:
         package = prepare_statement(

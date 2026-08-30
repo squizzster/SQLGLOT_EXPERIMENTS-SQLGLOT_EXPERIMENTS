@@ -17,7 +17,7 @@ set_lru_cache_size(size: int | None = None) -> ApiEnvelope
 SQL and both dialects are semantically required. Their `None` defaults allow
 omission to enter the public boundary and return a controlled failure envelope
 instead of raising Python's argument-binding `TypeError`. `bindings` is omitted
-when DML input has no placeholders. Otherwise the extended DML route resolves
+when prepared input has no placeholders. Otherwise the extended route resolves
 values through the declared source dialect's logical parameter slots. Every
 recognised outcome follows the [public API envelope](API_ENVELOPE.md).
 
@@ -26,8 +26,12 @@ AST. It then has two fixed success routes:
 
 | Source AST | Result |
 |---|---|
-| `SELECT`, `INSERT`, `UPDATE`, or `DELETE` | Complete extended preparation package |
+| `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, or `REPLACE` | Complete extended preparation package |
 | Any other AST accepted by SQLGlot | Generic acceptance envelope and source fingerprint |
+
+`WITH` remains a clause on the AST's effective operation. A CTE-prefixed
+statement therefore reports `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, or
+`REPLACE`; it never reports the less informative synthetic type `WITH`.
 
 A successful extended replacement returns:
 
@@ -50,7 +54,7 @@ A successful extended replacement returns:
 }
 ```
 
-A parsed non-DML statement returns exactly:
+A parsed statement outside the prepared route returns exactly:
 
 ```python
 {
@@ -67,7 +71,7 @@ resolve binding values, lift literals, generate target SQL, reparse a target
 AST, extract `where_fields`, or enter the prepared-structure LRU. Its
 `sql_fingerprint` covers the exact source SQL and normalized source/target
 dialect route. It is therefore a stable identity for that accepted input, not
-the value-independent DML fingerprint described below. A sequence or mapping
+the value-independent prepared-statement fingerprint described below. A sequence or mapping
 passed as `bindings` is accepted but not interpreted on this route.
 
 SQL requiring no replacement returns `success: True`, `warnings: False`, and
@@ -104,7 +108,7 @@ including:
 
 Empty or multiple statements and malformed SQL return this same fixed failure
 envelope. Unsupported placeholder forms, binding failures, and target-rendering
-failures apply to the extended DML route. An unexpected internal defect raises
+failures apply to the extended route. An unexpected internal defect raises
 an exception; it is not misreported as a recognised caller failure.
 
 Generic success means SQLGlot accepted one AST using the declared source
@@ -112,6 +116,41 @@ dialect. It does not prove that every SQL implementation would consider the
 text valid, nor can it accept syntax that the installed SQLGlot version cannot
 parse. SQLGlot fallback `Command` ASTs are accepted because this route does not
 transform or render them.
+
+### Configured extended dialects
+
+REPLACE uses INSERT-family mechanics while preserving public
+`statement_type: "REPLACE"` and native target syntax:
+
+- SQLite, MySQL, and DuckDB are configured REPLACE dialects.
+- Common value forms can cross those targets.
+- MySQL-only modifiers, `SET`, `PARTITION`, and `TABLE` forms remain
+  same-dialect because there is no proven schema-free equivalent everywhere.
+- MySQL `VALUE`, `VALUES ROW(...)`, source `TABLE`, and the valid
+  `REPLACE ... WITH ... SELECT` CTE placement are adapted explicitly.
+- `REPLACE ... SET` is rendered back as SET so MySQL's special right-hand
+  column semantics are not changed to VALUES. The specific `DEFAULT(column)`
+  shape currently lost by SQLGlot returns a controlled failure rather than a
+  false package.
+- MySQL optimizer hints immediately after `REPLACE` return a controlled failure
+  because SQLGlot does not preserve their required position. The library does
+  not interpret or execute optimizer behavior.
+
+MERGE is configured for PostgreSQL, DuckDB, Snowflake, T-SQL, BigQuery,
+Databricks, and Oracle. Common action forms may cross configured targets.
+Dialect-only actions, result projection, and match modes must be supported by
+the target or preparation fails. Narrow adapters preserve DuckDB `INSERT BY
+NAME`, Snowflake `ALL BY NAME`, Databricks star actions, BigQuery `INSERT ROW`,
+and T-SQL's statement terminator. MERGE action completeness and match/action
+compatibility are checked before and after generation.
+
+Configured means the tested common structural route, not every vendor extension.
+Currently unadapted forms such as T-SQL `MERGE TOP`, Oracle's combined
+`UPDATE ... DELETE WHERE` action, and PostgreSQL MERGE `OVERRIDING` return the
+fixed controlled failure envelope rather than a potentially lossy package.
+
+These are parser, transformation, and target-representation guarantees. They
+do not inspect schemas, keys, server versions, privileges, or engine state.
 
 Returned bindings are native Python values in generated-target-placeholder
 order. This may differ from source order when SQLGlot rewrites a construct; for
@@ -154,6 +193,10 @@ preserved when required to distinguish an identifier containing a dot from SQL
 qualification dots. Repeated physical identities are returned once, in
 deterministic AST order. An empty array means no field reference was found
 beneath a `WHERE`; a constant-only `WHERE 1 = 1` is one such case.
+
+A direct query used as a MERGE source is scoped like any other query, so its
+WHERE fields can resolve to the source's physical table. Correlated and
+ambiguous nested fields retain the conservative bare-field form.
 
 `hardcoded_value_count` counts replaced occurrences and
 `hardcoded_field_count` counts their distinct AST-associated fields. These
@@ -200,7 +243,7 @@ unchanged:
 
 ## Process-local structure cache
 
-Successful extended DML structures use Python's built-in LRU cache, with 128
+Successful extended statement structures use Python's built-in LRU cache, with 128
 entries as the default limit. Generic accepted statements do not use this
 cache. The cache is local to the Python process: callers in one process share
 it, separate Python processes have independent caches, and a process restart
@@ -214,7 +257,7 @@ fingerprint, statement type, WHERE fields, analysis, status, and binding route.
 Each call resolves that route against its current binding values and returns a
 fresh envelope with fresh mutable containers.
 
-Malformed SQL and invalid DML binding calls are not retained as cache entries.
+Malformed SQL and invalid binding calls are not retained as cache entries.
 Hardcoded literals remain part of the exact input SQL and its generated binding
 route. Cache behavior does not add fields to the public envelope.
 
@@ -231,6 +274,9 @@ The AST transform currently lifts direct constants from:
 - `IN` lists and `BETWEEN` bounds;
 - `UPDATE SET` assignments;
 - `INSERT ... VALUES` rows;
+- REPLACE values and MySQL SET assignments through the same INSERT-family
+  association;
+- MERGE UPDATE assignments and explicit MERGE INSERT values;
 - the same constructs inside nested queries, joins, and qualified table names.
 
 Projection constants, `LIMIT`, JSON paths, function configuration arguments,
@@ -240,7 +286,8 @@ are not adapted here. Compact PostgreSQL `$N` parameters without token
 separation and SQLite's extended Tcl-style parameter names remain unsupported.
 
 The SQLite target is execution-tested with Python's `sqlite3` driver, including
-same-dialect cast affinity and partial-index predicates. Other targets use
+same-dialect cast affinity, partial-index predicates, and ten REPLACE scenarios.
+Seven MERGE scenarios are equivalence-tested on DuckDB. Other targets use
 SQLGlot's target rendering, including its placeholder spelling; that is not
 target-engine validation. Preparation does not prove that a particular driver,
 schema, or engine will accept or execute the package. Brick 1 owns analysis and

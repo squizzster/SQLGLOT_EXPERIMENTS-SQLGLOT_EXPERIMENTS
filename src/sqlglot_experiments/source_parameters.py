@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from sqlglot import Dialect
 from sqlglot.tokenizer_core import Token, TokenType
+
+from sqlglot_experiments.dialect_adapters import tokenize_preparation_sql
 
 Binding = object
 InputBindings = Sequence[Binding] | Mapping[str, Binding]
@@ -92,7 +93,7 @@ def _lexical_parameters(
     *,
     source_dialect: str,
 ) -> tuple[_LexicalParameter, ...]:
-    tokens = Dialect.get_or_raise(source_dialect).tokenize(sql)
+    tokens = tokenize_preparation_sql(sql, dialect=source_dialect)
     if source_dialect == "sqlite":
         return _sqlite_parameters(
             sql,

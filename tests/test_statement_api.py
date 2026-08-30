@@ -654,13 +654,6 @@ class StatementApiTests(unittest.TestCase):
             ("postgres", "SET search_path TO public"),
             ("postgres", "GRANT SELECT ON TABLE people TO analyst"),
             ("postgres", "REVOKE SELECT ON TABLE people FROM analyst"),
-            (
-                "postgres",
-                (
-                    "MERGE INTO people AS p USING updates AS u ON p.id = u.id "
-                    "WHEN MATCHED THEN DELETE"
-                ),
-            ),
             ("postgres", "CALL refresh_people(1)"),
             ("postgres", "COPY people (id, name) FROM STDIN"),
             (
@@ -671,7 +664,7 @@ class StatementApiTests(unittest.TestCase):
                 ),
             ),
         )
-        self.assertEqual(len(cases), 31)
+        self.assertEqual(len(cases), 30)
         for dialect, sql in cases:
             with self.subTest(dialect=dialect, sql=sql):
                 result = prepare_statement_result(

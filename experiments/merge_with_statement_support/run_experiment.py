@@ -4,186 +4,14 @@ from __future__ import annotations
 
 import importlib
 import json
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
-from unittest.mock import patch
-
-from sqlglot import exp
-from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
-from sqlglot.optimizer.scope import traverse_scope
 
 from sqlglot_experiments import (
     PreparedStatement,
     prepare_statement,
-    statement_api,
-    statement_fingerprinting,
-    where_fields,
 )
-
-
-def _experimental_extended_statement_type(statement: exp.Expr) -> str | None:
-    if isinstance(statement, exp.Merge):
-        return "MERGE"
-    return _ORIGINAL_EXTENDED_STATEMENT_TYPE(statement)
-
-
-def _experimental_api_statement_type(
-    statement: exp.Expr,
-    *,
-    source_dialect: str,
-    target_dialect: str,
-) -> str:
-    if isinstance(statement, exp.Merge):
-        return "MERGE"
-    return _ORIGINAL_API_STATEMENT_TYPE(
-        statement,
-        source_dialect=source_dialect,
-        target_dialect=target_dialect,
-    )
-
-
-def _experimental_fingerprint_statement_type(
-    statement: exp.Expr,
-    *,
-    source_dialect: str,
-    target_dialect: str,
-) -> str:
-    if isinstance(statement, exp.Merge):
-        return "MERGE"
-    return _ORIGINAL_FINGERPRINT_STATEMENT_TYPE(
-        statement,
-        source_dialect=source_dialect,
-        target_dialect=target_dialect,
-    )
-
-
-def _experimental_insert_field_key(
-    row: exp.Tuple,
-    position: int | None,
-    *,
-    source_dialect: str,
-    target_dialect: str,
-) -> set[tuple[str, ...]] | None:
-    """Associate literals in a MERGE INSERT action with its target columns."""
-    existing = _ORIGINAL_INSERT_FIELD_KEY(
-        row,
-        position,
-        source_dialect=source_dialect,
-        target_dialect=target_dialect,
-    )
-    if existing is not None:
-        return existing
-    if position is None or not isinstance(row.parent, exp.Insert):
-        return None
-
-    insert_action = row.parent
-    if row is not insert_action.expression:
-        return None
-    merge = insert_action.find_ancestor(exp.Merge)
-    columns = insert_action.this
-    if not isinstance(merge, exp.Merge) or not isinstance(columns, exp.Tuple):
-        return None
-    if position >= len(columns.expressions):
-        return set()
-
-    target = merge.this
-    table_key = (
-        tuple(identifier.name for identifier in target.parts)
-        if isinstance(target, exp.Table)
-        else ()
-    )
-    return {(*table_key, columns.expressions[position].name)}
-
-
-def _experimental_extract_where_fields(
-    statement: exp.Expr,
-    *,
-    source_dialect: str,
-) -> list[str]:
-    """Include query scopes nested beneath a MERGE root."""
-    if not isinstance(statement, exp.Merge):
-        return _ORIGINAL_EXTRACT_WHERE_FIELDS(
-            statement,
-            source_dialect=source_dialect,
-        )
-
-    normalized = normalize_identifiers(
-        statement.copy(),
-        dialect=source_dialect,
-    )
-    scope_by_column = {
-        column_id: scope
-        for query in normalized.find_all(exp.Query)
-        for scope in traverse_scope(query)
-        for column_id in scope.column_index
-    }
-    seen: set[tuple[str | None, str | None, str]] = set()
-    fields: list[str] = []
-    for where in normalized.find_all(exp.Where):
-        for column in where.find_all(exp.Column):
-            if column.find_ancestor(exp.Where) is not where:
-                continue
-            table = where_fields._physical_source(
-                column,
-                scope=scope_by_column.get(id(column)),
-                dml_sources={},
-            )
-            identity, field_name = where_fields._field_identity_and_name(
-                column,
-                table=table,
-                source_dialect=source_dialect,
-            )
-            if identity in seen:
-                continue
-            seen.add(identity)
-            fields.append(field_name)
-    return fields
-
-
-_ORIGINAL_EXTENDED_STATEMENT_TYPE = statement_api._extended_statement_type
-_ORIGINAL_API_STATEMENT_TYPE = statement_api._statement_type
-_ORIGINAL_FINGERPRINT_STATEMENT_TYPE = statement_fingerprinting._statement_type
-_ORIGINAL_INSERT_FIELD_KEY = statement_api._insert_field_key
-_ORIGINAL_EXTRACT_WHERE_FIELDS = statement_api.extract_where_fields
-
-
-@contextmanager
-def merge_support() -> Iterator[None]:
-    """Temporarily add MERGE classification and INSERT-action value mapping."""
-    statement_api._prepare_statement_structure.cache_clear()
-    try:
-        with (
-            patch.object(
-                statement_api,
-                "_extended_statement_type",
-                side_effect=_experimental_extended_statement_type,
-            ),
-            patch.object(
-                statement_api,
-                "_statement_type",
-                side_effect=_experimental_api_statement_type,
-            ),
-            patch.object(
-                statement_fingerprinting,
-                "_statement_type",
-                side_effect=_experimental_fingerprint_statement_type,
-            ),
-            patch.object(
-                statement_api,
-                "_insert_field_key",
-                side_effect=_experimental_insert_field_key,
-            ),
-            patch.object(
-                statement_api,
-                "extract_where_fields",
-                side_effect=_experimental_extract_where_fields,
-            ),
-        ):
-            yield
-    finally:
-        statement_api._prepare_statement_structure.cache_clear()
 
 
 @dataclass(frozen=True)
@@ -369,8 +197,7 @@ MERGE_CASES = (
         target_dialect="duckdb",
         expected_statement_type="MERGE",
         expected_binding_count=1,
-        expected_sql_fragment="INSERT (BY AS NAME)",
-        known_unsafe_parse_success=True,
+        expected_sql_fragment="INSERT BY NAME",
     ),
     Case(
         "merge.duckdb.multiple_actions_returning",
@@ -412,8 +239,7 @@ MERGE_CASES = (
         "WHEN NOT MATCHED THEN INSERT *",
         source_dialect="snowflake",
         target_dialect="snowflake",
-        expected_statement_type="MERGE",
-        expected_binding_count=0,
+        expected_success=False,
     ),
     Case(
         "merge.snowflake.all_by_name_parser_gap",
@@ -422,8 +248,8 @@ MERGE_CASES = (
         "WHEN NOT MATCHED THEN INSERT ALL BY NAME",
         source_dialect="snowflake",
         target_dialect="snowflake",
-        expected_success=False,
-        known_parser_gap=True,
+        expected_statement_type="MERGE",
+        expected_binding_count=0,
     ),
     Case(
         "merge.databricks.star_actions",
@@ -468,18 +294,14 @@ MERGE_CASES = (
         "MERGE INTO people AS p USING incoming AS i ON p.id = i.id "
         "WHEN MATCHED THEN UPDATE SET name = 'Fred'",
         target_dialect="sqlite",
-        expected_statement_type="MERGE",
-        expected_binding_count=1,
-        known_unsupported_target=True,
+        expected_success=False,
     ),
     Case(
         "merge.mysql_target_observation",
         "MERGE INTO people AS p USING incoming AS i ON p.id = i.id "
         "WHEN MATCHED THEN UPDATE SET name = 'Fred'",
         target_dialect="mysql",
-        expected_statement_type="MERGE",
-        expected_binding_count=1,
-        known_unsupported_target=True,
+        expected_success=False,
     ),
     Case(
         "merge.binding_count_failure",
@@ -491,9 +313,7 @@ MERGE_CASES = (
     Case(
         "merge.malformed",
         "MERGE INTO people USING incoming WHEN MATCHED UPDATE",
-        expected_statement_type="MERGE",
-        expected_binding_count=0,
-        known_unsafe_parse_success=True,
+        expected_success=False,
     ),
     Case(
         "merge.multiple_statements",
@@ -669,36 +489,35 @@ def _duckdb_execution_result(case: DuckDBExecutionCase) -> dict[str, Any]:
 
 def run_experiment(*, execute_duckdb: bool = True) -> dict[str, Any]:
     """Run the structural matrix and optional real DuckDB comparisons."""
-    with merge_support():
-        results = [_case_result(case) for case in (*WITH_CASES, *MERGE_CASES)]
-        duckdb_results = (
-            [_duckdb_execution_result(case) for case in DUCKDB_EXECUTION_CASES]
-            if execute_duckdb
-            else []
-        )
-        hardcoded_package = cast(
-            PreparedStatement,
-            prepare_statement(
-                "MERGE INTO people AS p USING incoming AS i "
-                "ON p.id = i.id AND p.tenant_id = 7 "
-                "WHEN MATCHED THEN UPDATE SET name = 'Fred'",
-                source_dialect="postgres",
-                target_dialect="postgres",
-            ),
-        )
-        parameterized_package = cast(
-            PreparedStatement,
-            prepare_statement(
-                "MERGE INTO people AS p USING incoming AS i "
-                "ON p.id = i.id AND p.tenant_id = $1 "
-                "WHEN MATCHED THEN UPDATE SET name = $2",
-                bindings=[7, "Fred"],
-                source_dialect="postgres",
-                target_dialect="postgres",
-            ),
-        )
-        hardcoded_fingerprint = hardcoded_package["sql_fingerprint"]
-        parameterized_fingerprint = parameterized_package["sql_fingerprint"]
+    results = [_case_result(case) for case in (*WITH_CASES, *MERGE_CASES)]
+    duckdb_results = (
+        [_duckdb_execution_result(case) for case in DUCKDB_EXECUTION_CASES]
+        if execute_duckdb
+        else []
+    )
+    hardcoded_package = cast(
+        PreparedStatement,
+        prepare_statement(
+            "MERGE INTO people AS p USING incoming AS i "
+            "ON p.id = i.id AND p.tenant_id = 7 "
+            "WHEN MATCHED THEN UPDATE SET name = 'Fred'",
+            source_dialect="postgres",
+            target_dialect="postgres",
+        ),
+    )
+    parameterized_package = cast(
+        PreparedStatement,
+        prepare_statement(
+            "MERGE INTO people AS p USING incoming AS i "
+            "ON p.id = i.id AND p.tenant_id = $1 "
+            "WHEN MATCHED THEN UPDATE SET name = $2",
+            bindings=[7, "Fred"],
+            source_dialect="postgres",
+            target_dialect="postgres",
+        ),
+    )
+    hardcoded_fingerprint = hardcoded_package["sql_fingerprint"]
+    parameterized_fingerprint = parameterized_package["sql_fingerprint"]
 
     successful_packages = [
         result["package"] for result in results if result["package"]["success"]

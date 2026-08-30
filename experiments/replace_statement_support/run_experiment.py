@@ -1,273 +1,15 @@
-"""Probe REPLACE as a fifth extended statement family without changing main."""
+"""Exercise the integrated REPLACE support against its retained matrix."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
 from collections import Counter
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
-from unittest.mock import patch
+from typing import Any, cast
 
-from sqlglot import Dialect, ErrorLevel, exp
-from sqlglot.dialects.mysql import MySQL
-from sqlglot.dialects.sqlite import SQLite
-from sqlglot.errors import UnsupportedError
-from sqlglot.generators.mysql import MySQLGenerator
-from sqlglot.tokenizer_core import TokenType
-
-from sqlglot_experiments import (
-    prepare_statement,
-    source_parameters,
-    statement_api,
-    statement_fingerprinting,
-)
-from sqlglot_experiments.dialect_adapters import (
-    _SourceSQLite,
-    generate_target_sql,
-    parsing_dialect,
-)
-
-
-class _ReplaceParserMixin:
-    def _parse_replace_statement(self: Any) -> exp.Insert:
-        statement = cast(exp.Insert, self._parse_insert())
-        statement.set("alternative", "REPLACE")
-        return statement
-
-
-class _MySQLReplaceParserMixin(_ReplaceParserMixin):
-    def _parse_replace_statement(self: Any) -> exp.Insert:
-        modifier: str | None = None
-        if self._match_texts(("LOW_PRIORITY", "DELAYED")):
-            modifier = self._prev.text.upper()
-        statement = super()._parse_replace_statement()
-        if modifier:
-            statement.meta["replace_modifier"] = modifier
-        return statement
-
-
-class _ReplaceSourceSQLite(_SourceSQLite):
-    class Tokenizer(_SourceSQLite.Tokenizer):
-        COMMANDS = _SourceSQLite.Tokenizer.COMMANDS - {TokenType.REPLACE}
-
-    class Parser(_ReplaceParserMixin, _SourceSQLite.Parser):
-        STATEMENT_PARSERS: ClassVar = {
-            **_SourceSQLite.Parser.STATEMENT_PARSERS,
-            TokenType.REPLACE: lambda self: self._parse_replace_statement(),
-        }
-
-
-class _ReplaceMySQLGenerator(MySQLGenerator):
-    def insert_sql(self, expression: exp.Insert) -> str:
-        if str(expression.args.get("alternative", "")).upper() != "REPLACE":
-            return super().insert_sql(expression)
-
-        statement = expression.copy()
-        statement.set("with_", None)
-        statement.set("alternative", None)
-        insert_sql = super().insert_sql(statement)
-        if not insert_sql.startswith("INSERT"):
-            raise UnsupportedError("cannot render the MySQL REPLACE statement")
-        modifier = expression.meta.get("replace_modifier")
-        replace = f"REPLACE {modifier}" if modifier else "REPLACE"
-        return self.prepend_ctes(expression, f"{replace}{insert_sql[6:]}")
-
-
-class _ReplaceMySQL(MySQL):
-    class Tokenizer(MySQL.Tokenizer):
-        COMMANDS = MySQL.Tokenizer.COMMANDS - {TokenType.REPLACE}
-
-    class Parser(_MySQLReplaceParserMixin, MySQL.Parser):
-        STATEMENT_PARSERS: ClassVar = {
-            **MySQL.Parser.STATEMENT_PARSERS,
-            TokenType.REPLACE: lambda self: self._parse_replace_statement(),
-        }
-
-    Generator = _ReplaceMySQLGenerator
-
-
-def _experimental_parsing_dialect(
-    *,
-    source_dialect: str,
-    target_dialect: str,
-) -> type[SQLite | MySQL] | str:
-    if source_dialect == "sqlite":
-        return _ReplaceSourceSQLite
-    if source_dialect == "mysql":
-        return _ReplaceMySQL
-    return parsing_dialect(
-        source_dialect=source_dialect,
-        target_dialect=target_dialect,
-    )
-
-
-def _is_replace(statement: exp.Expr) -> bool:
-    return isinstance(statement, exp.Insert) and (
-        str(statement.args.get("alternative", "")).upper() == "REPLACE"
-    )
-
-
-def _experimental_generate_target_sql(
-    statement: exp.Expr,
-    *,
-    source_dialect: str,
-    target_dialect: str,
-    comments: bool = True,
-) -> str:
-    if not _is_replace(statement):
-        return generate_target_sql(
-            statement,
-            source_dialect=source_dialect,
-            target_dialect=target_dialect,
-            comments=comments,
-        )
-    if target_dialect == "mysql":
-        return statement.sql(
-            dialect=_ReplaceMySQL,
-            comments=comments,
-            unsupported_level=ErrorLevel.RAISE,
-        )
-    if target_dialect == "sqlite":
-        return generate_target_sql(
-            statement,
-            source_dialect=source_dialect,
-            target_dialect=target_dialect,
-            comments=comments,
-        )
-    raise UnsupportedError(
-        f"{target_dialect} has no configured REPLACE statement rendering"
-    )
-
-
-def _experimental_statement_type(
-    statement: exp.Expr,
-    *,
-    source_dialect: str,
-    target_dialect: str,
-) -> str:
-    if _is_replace(statement):
-        return "REPLACE"
-    return _ORIGINAL_API_STATEMENT_TYPE(
-        statement,
-        source_dialect=source_dialect,
-        target_dialect=target_dialect,
-    )
-
-
-def _experimental_fingerprint_statement_type(
-    statement: exp.Expr,
-    *,
-    source_dialect: str,
-    target_dialect: str,
-) -> str:
-    if _is_replace(statement):
-        return "REPLACE"
-    return _ORIGINAL_FINGERPRINT_STATEMENT_TYPE(
-        statement,
-        source_dialect=source_dialect,
-        target_dialect=target_dialect,
-    )
-
-
-def _experimental_lexical_parameters(
-    sql: str,
-    *,
-    source_dialect: str,
-) -> tuple[source_parameters._LexicalParameter, ...]:
-    if source_dialect == "sqlite":
-        return source_parameters._sqlite_parameters(
-            sql,
-            tokens=_ReplaceSourceSQLite.Tokenizer().tokenize(sql),
-        )
-    return _ORIGINAL_LEXICAL_PARAMETERS(
-        sql,
-        source_dialect=source_dialect,
-    )
-
-
-def _experimental_bindings_in_target_order(
-    statement: exp.Expr,
-    *,
-    marker_values: dict[str, object],
-    source_dialect: str,
-    target_dialect: str,
-) -> list[object]:
-    marked_sql = _experimental_generate_target_sql(
-        statement,
-        source_dialect=source_dialect,
-        target_dialect=target_dialect,
-    )
-    tokens = (
-        _ReplaceMySQL.Tokenizer().tokenize(marked_sql)
-        if target_dialect == "mysql"
-        else Dialect.get_or_raise(target_dialect).tokenize(marked_sql)
-    )
-    marker_order = [token.text for token in tokens if token.text in marker_values]
-    if set(marker_order) != set(marker_values):
-        raise statement_api.StatementPreparationError(
-            "target rendering lost a binding marker"
-        )
-    return [marker_values[marker] for marker in marker_order]
-
-
-_ORIGINAL_API_STATEMENT_TYPE = statement_api._statement_type
-_ORIGINAL_FINGERPRINT_STATEMENT_TYPE = statement_fingerprinting._statement_type
-_ORIGINAL_LEXICAL_PARAMETERS = source_parameters._lexical_parameters
-
-
-@contextmanager
-def replace_support() -> Iterator[None]:
-    """Temporarily install the proposed parser, generator, and type adapters."""
-    statement_api._prepare_statement_structure.cache_clear()
-    try:
-        with (
-            patch.object(
-                statement_api,
-                "parsing_dialect",
-                side_effect=_experimental_parsing_dialect,
-            ),
-            patch.object(
-                statement_fingerprinting,
-                "parsing_dialect",
-                side_effect=_experimental_parsing_dialect,
-            ),
-            patch.object(
-                statement_api,
-                "generate_target_sql",
-                side_effect=_experimental_generate_target_sql,
-            ),
-            patch.object(
-                statement_fingerprinting,
-                "generate_target_sql",
-                side_effect=_experimental_generate_target_sql,
-            ),
-            patch.object(
-                statement_api,
-                "_statement_type",
-                side_effect=_experimental_statement_type,
-            ),
-            patch.object(
-                statement_fingerprinting,
-                "_statement_type",
-                side_effect=_experimental_fingerprint_statement_type,
-            ),
-            patch.object(
-                source_parameters,
-                "_lexical_parameters",
-                side_effect=_experimental_lexical_parameters,
-            ),
-            patch.object(
-                statement_api,
-                "_bindings_in_target_order",
-                side_effect=_experimental_bindings_in_target_order,
-            ),
-        ):
-            yield
-    finally:
-        statement_api._prepare_statement_structure.cache_clear()
+from sqlglot_experiments import prepare_statement
 
 
 @dataclass(frozen=True)
@@ -507,8 +249,7 @@ CASES = (
         "mysql",
         "WITH incoming AS (SELECT 1 AS id, 'Mark' AS name) "
         "REPLACE INTO people SELECT * FROM incoming",
-        expected_binding_count=0,
-        expected_sql_fragment="REPLACE INTO people",
+        expected_success=False,
     ),
     Case(
         "sqlite_to_mysql.values",
@@ -538,15 +279,14 @@ CASES = (
         "mysql",
         "mysql",
         "REPLACE INTO people (id, name) VALUE (1, 'Mark')",
-        expected_success=False,
+        expected_binding_count=2,
     ),
     Case(
         "mysql.row_constructor.observation",
         "mysql",
         "mysql",
         "REPLACE INTO people (id, name) VALUES ROW(1, 'A'), ROW(2, 'B')",
-        expected_binding_count=0,
-        known_unsafe_success=True,
+        expected_binding_count=4,
     ),
     Case(
         "invalid.malformed",
@@ -710,63 +450,62 @@ def _execute_sqlite_case(case: SQLiteExecutionCase) -> dict[str, Any]:
 
 
 def run_experiment() -> dict[str, Any]:
-    with replace_support():
-        results: list[dict[str, Any]] = []
-        for case in CASES:
-            package = cast(
-                dict[str, Any],
-                prepare_statement(
-                    case.sql,
-                    bindings=case.bindings,
-                    source_dialect=case.source_dialect,
-                    target_dialect=case.target_dialect,
-                ),
+    results: list[dict[str, Any]] = []
+    for case in CASES:
+        package = cast(
+            dict[str, Any],
+            prepare_statement(
+                case.sql,
+                bindings=case.bindings,
+                source_dialect=case.source_dialect,
+                target_dialect=case.target_dialect,
+            ),
+        )
+        expectation_met = package["success"] is case.expected_success
+        if package["success"]:
+            expectation_met = expectation_met and (
+                package["envelope_type"] == "prepared"
+                and package["statement_type"] == "REPLACE"
             )
-            expectation_met = package["success"] is case.expected_success
-            if package["success"]:
+            if case.expected_binding_count is not None:
                 expectation_met = expectation_met and (
-                    package["envelope_type"] == "prepared"
-                    and package["statement_type"] == "REPLACE"
+                    len(package["bindings"]) == case.expected_binding_count
                 )
-                if case.expected_binding_count is not None:
-                    expectation_met = expectation_met and (
-                        len(package["bindings"]) == case.expected_binding_count
-                    )
-                if case.expected_sql_fragment is not None:
-                    expectation_met = expectation_met and (
-                        case.expected_sql_fragment in package["sql"]
-                    )
-            results.append(
-                {
-                    "name": case.name,
-                    "expectation_met": expectation_met,
-                    "package": package,
-                }
-            )
+            if case.expected_sql_fragment is not None:
+                expectation_met = expectation_met and (
+                    case.expected_sql_fragment in package["sql"]
+                )
+        results.append(
+            {
+                "name": case.name,
+                "expectation_met": expectation_met,
+                "package": package,
+            }
+        )
 
-        execution_results = [
-            _execute_sqlite_case(case) for case in SQLITE_EXECUTION_CASES
-        ]
+    execution_results = [
+        _execute_sqlite_case(case) for case in SQLITE_EXECUTION_CASES
+    ]
 
-        hardcoded = cast(
-            dict[str, Any],
-            prepare_statement(
-                "REPLACE INTO people (id, name) VALUES (1, 'Mark')",
-                source_dialect="sqlite",
-                target_dialect="sqlite",
-            ),
-        )
-        explicit = cast(
-            dict[str, Any],
-            prepare_statement(
-                "INSERT OR REPLACE INTO people (id, name) VALUES (1, 'Other')",
-                source_dialect="sqlite",
-                target_dialect="sqlite",
-            ),
-        )
-        fingerprint_converges = (
-            hardcoded.get("sql_fingerprint") == explicit.get("sql_fingerprint")
-        )
+    hardcoded = cast(
+        dict[str, Any],
+        prepare_statement(
+            "REPLACE INTO people (id, name) VALUES (1, 'Mark')",
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        ),
+    )
+    explicit = cast(
+        dict[str, Any],
+        prepare_statement(
+            "INSERT OR REPLACE INTO people (id, name) VALUES (1, 'Other')",
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        ),
+    )
+    fingerprint_converges = (
+        hardcoded.get("sql_fingerprint") == explicit.get("sql_fingerprint")
+    )
 
     observed = Counter(
         "success" if result["package"]["success"] else "failure"

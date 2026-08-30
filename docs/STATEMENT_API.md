@@ -1,4 +1,6 @@
-# Statement API contract
+# Public API contract
+
+The package exposes exactly two public operations:
 
 ```python
 prepare_statement(
@@ -8,6 +10,8 @@ prepare_statement(
     source_dialect: str | None = None,
     target_dialect: str | None = None,
 ) -> PreparationResult
+
+set_lru_cache_size(size: int | None = None) -> ApiEnvelope
 ```
 
 SQL and both dialects are semantically required. Their `None` defaults allow
@@ -121,6 +125,55 @@ Missing or extra caller bindings return a failure envelope. A successful return
 therefore always contains every binding needed by its generated SQL. Repeated
 source slots reuse one input value and expand into generated-target-placeholder
 order when necessary.
+
+## `set_lru_cache_size`
+
+The caller may configure the library's prepared-statement structure LRU in its
+current Python process:
+
+```python
+set_lru_cache_size(256)
+
+# {
+#     "success": True,
+#     "warnings": False,
+#     "msg": "success: ok",
+# }
+```
+
+`size` may be passed positionally or by keyword and must be a positive plain
+integer. A successful call replaces and empties the process-local cache.
+Other Python processes are unaffected. Invalid calls return
+only the fixed failure envelope and leave the active cache and its entries
+unchanged:
+
+| Situation | `msg` |
+|---|---|
+| Missing size | `failure: lru cache size is required` |
+| Zero, negative, boolean, or non-integer size | `failure: lru cache size must be a positive integer` |
+| Extra positional argument | `failure: only size may be passed positionally` |
+| Size passed twice | `failure: size was provided more than once` |
+| Unknown keyword | `failure: unexpected argument: <name>` |
+
+## Process-local structure cache
+
+Successful statement structures use Python's built-in LRU cache, with 128
+entries as the default limit. The cache is local to the Python process: callers
+in one process share it, separate Python processes have independent caches,
+and a process restart restores the 128-entry default with an empty cache.
+
+The immutable cache key consists of the normalized source dialect, normalized
+target dialect, exact input SQL, and ordered source binding names. Anonymous
+slots receive structural names such as `#1`. Caller binding values never enter
+the cache key or cached structure. A cached entry retains the generated SQL,
+fingerprint, statement type, WHERE fields, analysis, status, and binding route.
+Each call resolves that route against its current binding values and returns a
+fresh envelope with fresh mutable containers.
+
+Malformed SQL, unsupported statements, and invalid binding calls are not
+retained as cache entries. Hardcoded literals remain part of the exact input
+SQL and its generated binding route. Cache behavior does not add fields to the
+public envelope.
 
 SQLite accepts sequences for native slot numbering and mappings for named
 parameters. This covers `?`, `?NNN`, `:name`, `@name`, `$name`, repeated names,

@@ -11,6 +11,7 @@ from sqlglot_experiments.statement_api import (
     PreparedStatement,
     StatementType,
     prepare_statement,
+    set_lru_cache_size,
 )
 from sqlglot_experiments.where_fields import WhereField
 
@@ -26,6 +27,7 @@ __all__ = [
     "StatementType",
     "WhereField",
     "prepare_statement",
+    "set_lru_cache_size",
 ]
 
 

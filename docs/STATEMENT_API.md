@@ -217,6 +217,7 @@ not name the fields.
         "table": str,
     },
     "supplied_columns": list[str],
+    "plain_values_binding_rows": list[list[int]] | None,
 }
 ```
 
@@ -230,11 +231,22 @@ SQL without an explicit target-column association, including ordinary positional
 `VALUES` and `INSERT BY NAME`, receives an empty list; the library does not infer
 schema order.
 
-The facts are deliberately static. Multi-row input, INSERT SELECT, conflict
-actions, `RETURNING`, and MySQL SET syntax retain the same target/column report.
-This library does not connect to a database and therefore cannot decide whether a
-target has an auto-increment identity or whether the supplied columns cover a
-unique constraint. That final boolean belongs to a schema-owning consumer.
+`plain_values_binding_rows` is present for one narrow, syntax-proven shape: the
+source is an unmodified top-level `INSERT ... VALUES`, the target AST still has
+plain VALUES rows, and every row cell is one direct returned binding. Each integer
+is the cell's zero-based index in the package's authoritative `bindings` list.
+Rows and cells retain source order, so a two-row, three-column INSERT reports two
+three-index lists. It is `None` for computed or default cells, INSERT SELECT,
+conflict actions, `RETURNING`, INSERT modifiers, and vendor forms such as MySQL
+SET. A positional INSERT can have a binding-row map while still having an empty
+`supplied_columns` list; the library never invents column ownership.
+
+The facts are deliberately static. Multi-row input retains target and column
+evidence and may carry several plain binding rows, but this does not make it a
+single-row operation. This library does not connect to a database and therefore
+cannot decide whether a target has an auto-increment identity, whether supplied
+columns cover a unique constraint, or whether a row-value tuple is usable as a
+database identity. Those decisions belong to a schema-owning consumer.
 
 Missing caller bindings and incorrectly sized binding sequences return a
 failure envelope. SQLite mappings must contain every required named key;

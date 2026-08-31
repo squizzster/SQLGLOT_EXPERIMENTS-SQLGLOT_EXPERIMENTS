@@ -95,6 +95,10 @@ class StatementStructureCacheTests(unittest.TestCase):
         assert first_analysis is not None
         first_analysis["target"]["table"] = "broken"
         first_analysis["supplied_columns"].append("invented")
+        binding_rows = first_analysis["plain_values_binding_rows"]
+        self.assertIsNotNone(binding_rows)
+        assert binding_rows is not None
+        binding_rows[0].append(999)
 
         second = prepared(sql, bindings=["B", 2])
 
@@ -107,6 +111,7 @@ class StatementStructureCacheTests(unittest.TestCase):
                     "table": "people",
                 },
                 "supplied_columns": ["lookup_code", "payload"],
+                "plain_values_binding_rows": [[0, 1]],
             },
         )
 
@@ -139,7 +144,9 @@ class StatementStructureCacheTests(unittest.TestCase):
             bindings=[999],
         )
         evicted = statement_api._prepare_statement_structure.cache_info()
-        self.assertEqual((evicted.hits, evicted.misses, evicted.currsize), (0, 130, 128))
+        self.assertEqual(
+            (evicted.hits, evicted.misses, evicted.currsize), (0, 130, 128)
+        )
 
     def test_public_api_resizes_and_empties_this_process_cache(self) -> None:
         sql = "SELECT * FROM people WHERE id = ?"
@@ -253,9 +260,7 @@ class StatementStructureCacheTests(unittest.TestCase):
             )
             self.assertEqual(result["success"], True)
 
-        generic_acceptance = (
-            statement_api._prepare_statement_structure.cache_info()
-        )
+        generic_acceptance = statement_api._prepare_statement_structure.cache_info()
         self.assertEqual(
             (
                 generic_acceptance.hits,

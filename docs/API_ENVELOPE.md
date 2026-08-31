@@ -54,8 +54,8 @@ the success payload without altering generated SQL or warning state.
 
 The prepared envelope's `analysis.insert` member is fixed-shape AST evidence, not
 an execution-readiness claim. It is `None` for non-INSERT prepared families and a
-structured target/supplied-column report for INSERT. It does not alter warning or
-failure state.
+structured target, supplied-column, and optional direct binding-row report for
+INSERT. It does not alter warning or failure state.
 
 SQLGlot-accepted statements outside the extended `SELECT`, `INSERT`, `UPDATE`,
 `DELETE`, `MERGE`, and `REPLACE` route return the normal three-field success

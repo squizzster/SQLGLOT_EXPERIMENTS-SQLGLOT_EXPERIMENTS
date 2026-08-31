@@ -157,10 +157,137 @@ class SqliteTortureConsumerTests(unittest.TestCase):
 
         self.assertEqual(len(packages), 587)
         self.assertEqual(len(fields), 559)
-        self.assertEqual(sum(bool(package["where_fields"]) for package in packages), 320)
+        self.assertEqual(
+            sum(bool(package["where_fields"]) for package in packages), 320
+        )
         self.assertEqual(sum("." in field for field in fields), 494)
         self.assertEqual(sum("." not in field for field in fields), 65)
         self.assertTrue(all(isinstance(field, str) and field for field in fields))
+
+    def test_every_successful_package_receives_exact_insert_analysis(self) -> None:
+        packages = [
+            result["package"]
+            for result in self.report["results"]
+            if result.get("package", {}).get("success")
+        ]
+        insert_results = [
+            result
+            for result in self.report["results"]
+            if result.get("package", {}).get("success")
+            and result["package"]["statement_type"] == "INSERT"
+        ]
+
+        self.assertEqual(len(packages), 587)
+        self.assertTrue(
+            all(
+                package["analysis"]["insert"] is None
+                for package in packages
+                if package["statement_type"] != "INSERT"
+            )
+        )
+        observed = {}
+        for result in insert_results:
+            analysis = result["package"]["analysis"]["insert"]
+            self.assertIsNotNone(analysis, result["name"])
+            assert analysis is not None
+            target = analysis["target"]
+            observed[result["name"]] = (
+                (target["catalog"], target["schema"], target["table"]),
+                tuple(analysis["supplied_columns"]),
+            )
+        self.assertEqual(
+            observed,
+            {
+                "dml.insert_returning_generated": (
+                    (None, None, "order_items"),
+                    (
+                        "order_id",
+                        "line_no",
+                        "tenant_id",
+                        "product_id",
+                        "quantity",
+                        "unit_price_cents",
+                        "discount_cents",
+                    ),
+                ),
+                "upsert.returning_updated_row": (
+                    (None, None, "tenant_kv"),
+                    ("tenant_id", "key_name", "value_text", "version"),
+                ),
+                "constraint.duplicate_primary_key": (
+                    (None, None, "customer_notes"),
+                    ("note_id", "customer_id", "body"),
+                ),
+                "constraint.duplicate_composite_primary_key": (
+                    (None, None, "tenant_kv"),
+                    ("tenant_id", "key_name", "value_text", "version"),
+                ),
+                "constraint.duplicate_unique_nonnull": (
+                    (None, None, "unique_probe"),
+                    ("probe_id", "key_a", "key_b"),
+                ),
+                "constraint.not_null": (
+                    (None, None, "customer_notes"),
+                    ("note_id", "customer_id", "body"),
+                ),
+                "constraint.composite_pk_not_null": (
+                    (None, None, "tenant_kv"),
+                    ("tenant_id", "key_name", "value_text", "version"),
+                ),
+                "foreign_key.orphan_insert": (
+                    (None, None, "customer_notes"),
+                    ("note_id", "customer_id", "body"),
+                ),
+                "foreign_key.composite_missing_line": (
+                    (None, None, "returns"),
+                    (
+                        "return_id",
+                        "order_id",
+                        "line_no",
+                        "quantity",
+                        "refund_cents",
+                        "reason",
+                    ),
+                ),
+                "generated.cannot_insert_value": (
+                    (None, None, "order_items"),
+                    (
+                        "order_id",
+                        "line_no",
+                        "tenant_id",
+                        "product_id",
+                        "quantity",
+                        "unit_price_cents",
+                        "discount_cents",
+                        "line_total_cents",
+                    ),
+                ),
+                "ddl.strict_type_rejection": (
+                    (None, None, "strict_reject"),
+                    (),
+                ),
+                "ddl.without_rowid_requires_nonnull_pk": (
+                    (None, None, "no_rowid"),
+                    (),
+                ),
+                "trigger.raise_abort": (
+                    (None, None, "guarded_probe"),
+                    (),
+                ),
+                "local.insert.fixed": (
+                    (None, None, "local_probe"),
+                    ("id", "label"),
+                ),
+                "local.insert.placeholder": (
+                    (None, None, "local_probe"),
+                    ("id", "label"),
+                ),
+                "local.insert.named_mapping": (
+                    (None, None, "local_probe"),
+                    ("id", "label"),
+                ),
+            },
+        )
 
     def test_complete_torture_run_has_no_genuine_failures(self) -> None:
         self.assertEqual(self.report["summary"]["genuine_failure_count"], 0)

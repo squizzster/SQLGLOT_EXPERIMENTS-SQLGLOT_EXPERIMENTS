@@ -88,6 +88,7 @@ class StatementApiTests(unittest.TestCase):
                 "analysis": {
                     "hardcoded_value_count": 1,
                     "hardcoded_field_count": 1,
+                    "insert": None,
                 },
             },
         )
@@ -130,7 +131,18 @@ class StatementApiTests(unittest.TestCase):
         self.assertEqual(package["bindings"], [1, True, None])
         self.assertEqual(
             package["analysis"],
-            {"hardcoded_value_count": 3, "hardcoded_field_count": 0},
+            {
+                "hardcoded_value_count": 3,
+                "hardcoded_field_count": 0,
+                "insert": {
+                    "target": {
+                        "catalog": None,
+                        "schema": None,
+                        "table": "flags",
+                    },
+                    "supplied_columns": [],
+                },
+            },
         )
 
     def test_update_orders_set_bindings_before_where_bindings(self) -> None:
@@ -191,7 +203,11 @@ class StatementApiTests(unittest.TestCase):
         self.assertEqual(package["bindings"], [10, 100])
         self.assertEqual(
             package["analysis"],
-            {"hardcoded_value_count": 2, "hardcoded_field_count": 1},
+            {
+                "hardcoded_value_count": 2,
+                "hardcoded_field_count": 1,
+                "insert": None,
+            },
         )
 
     def test_non_field_literals_remain_sql_and_are_not_bindings(self) -> None:
@@ -225,7 +241,11 @@ class StatementApiTests(unittest.TestCase):
         )
         self.assertEqual(
             package["analysis"],
-            {"hardcoded_value_count": 0, "hardcoded_field_count": 0},
+            {
+                "hardcoded_value_count": 0,
+                "hardcoded_field_count": 0,
+                "insert": None,
+            },
         )
 
     def test_existing_placeholder_returns_complete_package(self) -> None:
@@ -252,6 +272,7 @@ class StatementApiTests(unittest.TestCase):
                 "analysis": {
                     "hardcoded_value_count": 0,
                     "hardcoded_field_count": 0,
+                    "insert": None,
                 },
             },
         )
@@ -373,10 +394,10 @@ class StatementApiTests(unittest.TestCase):
 
         self.assertEqual(package["bindings"], [30, 40, 10])
         failure = prepare_statement_result(
-                "SELECT ?3, ?, ?1",
-                bindings=[10, 20, 30],
-                source_dialect="sqlite",
-                target_dialect="sqlite",
+            "SELECT ?3, ?, ?1",
+            bindings=[10, 20, 30],
+            source_dialect="sqlite",
+            target_dialect="sqlite",
         )
         assert_failure(
             self,
@@ -471,7 +492,11 @@ class StatementApiTests(unittest.TestCase):
         self.assertEqual(package["bindings"], ["sales", "open", 7])
         self.assertEqual(
             package["analysis"],
-            {"hardcoded_value_count": 1, "hardcoded_field_count": 1},
+            {
+                "hardcoded_value_count": 1,
+                "hardcoded_field_count": 1,
+                "insert": None,
+            },
         )
 
     def test_bindings_follow_generated_limit_offset_order(self) -> None:

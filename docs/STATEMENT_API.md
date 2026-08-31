@@ -50,6 +50,7 @@ A successful extended replacement returns:
     "analysis": {
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
+        "insert": None,
     },
 }
 ```
@@ -204,6 +205,36 @@ counts are the machine-readable warning that Brick 1 replaced hardcoded values;
 both remain `0` for already-parameterized input. An `INSERT` without a column
 list can still lift its values, but its field count is `0` because the SQL does
 not name the fields.
+
+`analysis.insert` is present on every prepared envelope. For `SELECT`, `UPDATE`,
+`DELETE`, `MERGE`, and `REPLACE` it is `None`. A prepared INSERT returns:
+
+```python
+{
+    "target": {
+        "catalog": str | None,
+        "schema": str | None,
+        "table": str,
+    },
+    "supplied_columns": list[str],
+}
+```
+
+These are target-AST facts because the generated target SQL is the executable
+package. Qualification remains structured: a quoted table named
+`"inventory.log"` has `table: "inventory.log"` and no schema, while
+`inventory.log` has `schema: "inventory"` and `table: "log"`. Quoted dotted
+columns likewise remain one supplied identifier. Column order and duplicates are
+preserved. PostgreSQL target aliases retain the following INSERT column list.
+SQL without an explicit target-column association, including ordinary positional
+`VALUES` and `INSERT BY NAME`, receives an empty list; the library does not infer
+schema order.
+
+The facts are deliberately static. Multi-row input, INSERT SELECT, conflict
+actions, `RETURNING`, and MySQL SET syntax retain the same target/column report.
+This library does not connect to a database and therefore cannot decide whether a
+target has an auto-increment identity or whether the supplied columns cover a
+unique constraint. That final boolean belongs to a schema-owning consumer.
 
 Missing caller bindings and incorrectly sized binding sequences return a
 failure envelope. SQLite mappings must contain every required named key;

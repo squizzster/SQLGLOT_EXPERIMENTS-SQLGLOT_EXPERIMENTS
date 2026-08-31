@@ -38,6 +38,7 @@ class InsertAnalysisTests(unittest.TestCase):
                     "table": "people",
                 },
                 "supplied_columns": ["lookup_code", "payload"],
+                "plain_values_binding_rows": [[0, 1]],
             },
         )
 
@@ -56,6 +57,7 @@ class InsertAnalysisTests(unittest.TestCase):
                     "table": "inventory.log",
                 },
                 "supplied_columns": ["select", "sku.code"],
+                "plain_values_binding_rows": [[0, 1]],
             },
         )
 
@@ -124,6 +126,7 @@ class InsertAnalysisTests(unittest.TestCase):
                     analysis["supplied_columns"],
                     ["lookup_code", "payload"],
                 )
+                self.assertIsNone(analysis["plain_values_binding_rows"])
 
     def test_absent_column_ownership_is_empty_and_never_invented(self) -> None:
         cases = (
@@ -171,6 +174,7 @@ class InsertAnalysisTests(unittest.TestCase):
                     "table": "people",
                 },
                 "supplied_columns": ["lookup_code", "payload"],
+                "plain_values_binding_rows": [[0, 1]],
             },
         )
 
@@ -304,8 +308,68 @@ class InsertAnalysisTests(unittest.TestCase):
                             "table": "people",
                         },
                         "supplied_columns": ["lookup_code", "payload"],
+                        "plain_values_binding_rows": [[0, 1]],
                     },
                 )
+
+    def test_plain_values_rows_map_cells_to_returned_binding_indexes(self) -> None:
+        package = prepare_statement(
+            "INSERT INTO people (row_id, lookup_code, qty, note) "
+            "VALUES (:first_id, 'A-1', 3, 'fresh'), (2, 'B-2', 1, 'new')",
+            bindings={"first_id": 99},
+            source_dialect="sqlite",
+            target_dialect="sqlite",
+        )
+        if not package["success"] or package["envelope_type"] != "prepared":
+            raise AssertionError(package)
+
+        self.assertEqual(
+            package["bindings"],
+            [99, "A-1", 3, "fresh", 2, "B-2", 1, "new"],
+        )
+        analysis = package["analysis"]["insert"]
+        self.assertIsNotNone(analysis)
+        assert analysis is not None
+        self.assertEqual(
+            analysis["plain_values_binding_rows"],
+            [[0, 1, 2, 3], [4, 5, 6, 7]],
+        )
+
+    def test_modified_or_computed_insert_has_no_plain_value_mapping(self) -> None:
+        cases = (
+            (
+                "sqlite",
+                (
+                    "INSERT INTO people (lookup_code, payload) VALUES ('A', 1) "
+                    "ON CONFLICT(lookup_code) DO UPDATE "
+                    "SET payload = excluded.payload"
+                ),
+            ),
+            (
+                "sqlite",
+                "INSERT INTO people (lookup_code) VALUES (upper('a'))",
+            ),
+            (
+                "sqlite",
+                "INSERT INTO people (lookup_code) SELECT 'A'",
+            ),
+            (
+                "sqlite",
+                "INSERT OR IGNORE INTO people (lookup_code) VALUES ('A')",
+            ),
+            (
+                "postgres",
+                "INSERT INTO people (lookup_code) VALUES ('A') RETURNING lookup_code",
+            ),
+        )
+
+        for dialect, sql in cases:
+            with self.subTest(dialect=dialect, sql=sql):
+                package = prepared(sql, source_dialect=dialect)
+                analysis = package["analysis"]["insert"]
+                self.assertIsNotNone(analysis)
+                assert analysis is not None
+                self.assertIsNone(analysis["plain_values_binding_rows"])
 
     def test_all_supported_insert_dialects_share_the_contract(self) -> None:
         for dialect in (

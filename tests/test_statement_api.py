@@ -141,6 +141,7 @@ class StatementApiTests(unittest.TestCase):
                         "table": "flags",
                     },
                     "supplied_columns": [],
+                    "plain_values_binding_rows": [[0, 1, 2]],
                 },
             },
         )
@@ -631,26 +632,17 @@ class StatementApiTests(unittest.TestCase):
             ("sqlite", "CREATE TABLE people (id INTEGER)"),
             (
                 "sqlite",
-                (
-                    "CREATE TABLE active_people AS "
-                    "SELECT * FROM people WHERE active = 1"
-                ),
+                ("CREATE TABLE active_people AS SELECT * FROM people WHERE active = 1"),
             ),
             ("sqlite", "ALTER TABLE people ADD COLUMN active INTEGER"),
             ("sqlite", "ALTER TABLE people RENAME TO persons"),
             (
                 "sqlite",
-                (
-                    "CREATE INDEX active_people_idx ON people(id) "
-                    "WHERE active = 1"
-                ),
+                ("CREATE INDEX active_people_idx ON people(id) WHERE active = 1"),
             ),
             (
                 "sqlite",
-                (
-                    "CREATE VIEW active_people AS "
-                    "SELECT * FROM people WHERE active = 1"
-                ),
+                ("CREATE VIEW active_people AS SELECT * FROM people WHERE active = 1"),
             ),
             ("sqlite", "DROP TABLE people"),
             ("sqlite", "BEGIN"),
@@ -716,8 +708,7 @@ class StatementApiTests(unittest.TestCase):
             "sqlglot_experiments.statement_api._prepare_statement"
         ) as extended_pipeline:
             result = prepare_statement_result(
-                "CREATE VIEW active_people AS "
-                "SELECT * FROM people WHERE active = ?",
+                "CREATE VIEW active_people AS SELECT * FROM people WHERE active = ?",
                 source_dialect="sqlite",
                 target_dialect="sqlite",
             )
@@ -799,10 +790,13 @@ class StatementApiTests(unittest.TestCase):
         )
 
     def test_unexpected_internal_error_escapes_as_a_defect(self) -> None:
-        with patch(
-            "sqlglot_experiments.statement_api._prepare_statement",
-            side_effect=RuntimeError("external details must not escape"),
-        ), self.assertRaisesRegex(RuntimeError, "external details must not escape"):
+        with (
+            patch(
+                "sqlglot_experiments.statement_api._prepare_statement",
+                side_effect=RuntimeError("external details must not escape"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "external details must not escape"),
+        ):
             prepare_statement_result(
                 "SELECT 1",
                 source_dialect="sqlite",
@@ -824,9 +818,7 @@ class StatementApiTests(unittest.TestCase):
         self.assertTrue(result["msg"].endswith("..."))
 
     def test_known_invalid_calls_return_specific_fixed_envelopes(self) -> None:
-        cases: tuple[
-            tuple[str, tuple[object, ...], dict[str, object], str], ...
-        ] = (
+        cases: tuple[tuple[str, tuple[object, ...], dict[str, object], str], ...] = (
             ("missing sql", (), {}, "failure: sql is required"),
             (
                 "non-string sql",
@@ -1190,8 +1182,7 @@ class SqliteConsumerTests(unittest.TestCase):
         ):
             with self.subTest(type_name=type_name):
                 sql = (
-                    "SELECT CAST(0.5 AS "
-                    f"{type_name}), TYPEOF(CAST(0.5 AS {type_name}))"
+                    f"SELECT CAST(0.5 AS {type_name}), TYPEOF(CAST(0.5 AS {type_name}))"
                 )
                 package = prepare_statement(
                     sql,

@@ -86,12 +86,14 @@ qualified to a physical table and 65 retained as bare fields.
 
 Every prepared package also carries `analysis.insert`. It is `None` for every
 non-INSERT family. For INSERT it contains the target's separate catalog, schema,
-and table components plus the exact explicit supplied-column sequence from the
-authoritative target AST. Quoted dots remain identifier content, qualification is
-not flattened, duplicates remain visible, and an absent column list stays empty.
-The library does not inspect database schema or claim auto-increment/unique
-eligibility; its consumer combines these static SQL facts with its own schema
-evidence.
+and table components, the exact explicit supplied-column sequence, and an
+optional row-to-binding-index map for an unmodified source `INSERT ... VALUES`.
+The map identifies only direct value cells in the authoritative returned binding
+order; computed cells and INSERT modifiers receive `None`. Quoted dots remain
+identifier content, qualification is not flattened, duplicates remain visible,
+and an absent column list stays empty. The library does not inspect database
+schema or claim auto-increment/unique eligibility; its consumer combines these
+static SQL facts with its own schema evidence.
 
 Prepared SQL structures use a built-in LRU with a default limit of 128 entries
 per Python process. Consumers may replace that limit with

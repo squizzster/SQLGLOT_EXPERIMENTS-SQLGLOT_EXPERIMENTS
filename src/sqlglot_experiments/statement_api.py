@@ -10,6 +10,7 @@ from typing import Literal, TypedDict, cast, overload
 
 from sqlglot import Dialect, exp, parse
 from sqlglot.errors import ParseError, SqlglotError, TokenError, UnsupportedError
+from sqlglot.tokenizer_core import TokenType
 
 from sqlglot_experiments.api_envelope import (
     ApiEnvelope,
@@ -50,9 +51,7 @@ from sqlglot_experiments.where_fields import (
 )
 
 _DEFAULT_LRU_CACHE_SIZE = 128
-_GENERIC_FINGERPRINT_ALGORITHM = (
-    "sqlglot-experiments/generic-source-fingerprint/v1"
-)
+_GENERIC_FINGERPRINT_ALGORITHM = "sqlglot-experiments/generic-source-fingerprint/v1"
 
 
 class InsertTarget(TypedDict):
@@ -64,6 +63,7 @@ class InsertTarget(TypedDict):
 class InsertAnalysis(TypedDict):
     target: InsertTarget
     supplied_columns: list[str]
+    plain_values_binding_rows: list[list[int]] | None
 
 
 class Analysis(TypedDict):
@@ -144,6 +144,7 @@ class _InsertTarget:
 class _InsertAnalysis:
     target: _InsertTarget
     supplied_columns: tuple[str, ...]
+    plain_values_binding_rows: tuple[tuple[int, ...], ...] | None
 
 
 _DIRECT_PREDICATES = (
@@ -251,9 +252,7 @@ def _validate_lru_cache_call(
     if size is None:
         raise LruCacheConfigurationError("lru cache size is required")
     if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
-        raise LruCacheConfigurationError(
-            "lru cache size must be a positive integer"
-        )
+        raise LruCacheConfigurationError("lru cache size must be a positive integer")
     return size
 
 
@@ -336,9 +335,7 @@ def _tag_parameter_occurrences(
     parts: list[str] = []
     cursor = 0
     for index, occurrence in enumerate(occurrences):
-        parts.extend(
-            (sql[cursor : occurrence.start], f":{marker_prefix}{index}")
-        )
+        parts.extend((sql[cursor : occurrence.start], f":{marker_prefix}{index}"))
         cursor = occurrence.end + 1
     parts.append(sql[cursor:])
     return "".join(parts)
@@ -409,10 +406,7 @@ def _prepare_statement(
         sql,
         source_dialect,
         target_dialect,
-        tuple(
-            slot.bind_name or f"#{slot.number}"
-            for slot in parameter_plan.slots
-        ),
+        tuple(slot.bind_name or f"#{slot.number}" for slot in parameter_plan.slots),
     )
     return _materialize_prepared_statement(
         structure,
@@ -483,11 +477,21 @@ def _build_statement_structure(
             target_dialect=target_dialect,
         )
     )
-    merged_bindings = _bindings_in_target_order(
+    binding_markers = _binding_markers_in_target_order(
         prepared_ast,
         marker_values=marker_values,
         source_dialect=source_dialect,
         target_dialect=target_dialect,
+    )
+    merged_bindings = [marker_values[marker] for marker in binding_markers]
+    plain_values_binding_rows = _plain_insert_value_binding_rows(
+        prepared_ast,
+        statement_type=statement_type,
+        binding_markers=binding_markers,
+        source_uses_values_syntax=_source_uses_insert_values_syntax(
+            sql,
+            source_dialect=source_dialect,
+        ),
     )
     _make_placeholders_anonymous(
         prepared_ast,
@@ -535,6 +539,7 @@ def _build_statement_structure(
     insert_analysis = _extract_insert_analysis(
         target_ast,
         statement_type=target_statement_type,
+        plain_values_binding_rows=plain_values_binding_rows,
     )
     sql_fingerprint = fingerprint_statement(
         sql,
@@ -573,9 +578,7 @@ def _replace_statement_structure_cache(size: int) -> None:
     global _prepare_statement_structure
 
     previous_cache = _prepare_statement_structure
-    _prepare_statement_structure = lru_cache(maxsize=size)(
-        _build_statement_structure
-    )
+    _prepare_statement_structure = lru_cache(maxsize=size)(_build_statement_structure)
     previous_cache.cache_clear()
 
 
@@ -635,6 +638,7 @@ def _extract_insert_analysis(
     statement: exp.Expr,
     *,
     statement_type: StatementType,
+    plain_values_binding_rows: tuple[tuple[int, ...], ...] | None,
 ) -> _InsertAnalysis | None:
     """Extract only target-owned facts proven by one prepared INSERT AST."""
 
@@ -668,6 +672,7 @@ def _extract_insert_analysis(
             table=table_expression.name,
         ),
         supplied_columns=tuple(column.name for column in column_expressions),
+        plain_values_binding_rows=plain_values_binding_rows,
     )
 
 
@@ -683,6 +688,11 @@ def _materialize_insert_analysis(
             "table": analysis.target.table,
         },
         "supplied_columns": list(analysis.supplied_columns),
+        "plain_values_binding_rows": (
+            [list(row) for row in analysis.plain_values_binding_rows]
+            if analysis.plain_values_binding_rows is not None
+            else None
+        ),
     }
 
 
@@ -862,13 +872,13 @@ def _mark_hardcoded_values(
     return target_ast, marker_values, field_keys, len(candidates)
 
 
-def _bindings_in_target_order(
+def _binding_markers_in_target_order(
     statement: exp.Expr,
     *,
     marker_values: dict[str, Binding],
     source_dialect: str,
     target_dialect: str,
-) -> list[Binding]:
+) -> tuple[str, ...]:
     marked_sql = _generate_sql(
         statement,
         source_dialect=source_dialect,
@@ -882,9 +892,85 @@ def _bindings_in_target_order(
         )
         if token.text in marker_values
     ]
-    if set(marker_order) != set(marker_values):
+    if set(marker_order) != set(marker_values) or len(marker_order) != len(
+        marker_values
+    ):
         raise StatementPreparationError("target rendering lost a binding marker")
-    return [marker_values[marker] for marker in marker_order]
+    return tuple(marker_order)
+
+
+def _plain_insert_value_binding_rows(
+    statement: exp.Expr,
+    *,
+    statement_type: StatementType,
+    binding_markers: tuple[str, ...],
+    source_uses_values_syntax: bool,
+) -> tuple[tuple[int, ...], ...] | None:
+    """Map direct plain VALUES cells to authoritative returned binding indexes."""
+
+    if (
+        statement_type != "INSERT"
+        or not source_uses_values_syntax
+        or not isinstance(statement, exp.Insert)
+    ):
+        return None
+    if any(
+        value
+        for name, value in statement.args.items()
+        if name not in {"this", "expression"}
+    ):
+        return None
+
+    values_expression = statement.expression
+    if not isinstance(values_expression, exp.Values) or any(
+        value for name, value in values_expression.args.items() if name != "expressions"
+    ):
+        return None
+
+    binding_indexes = {marker: index for index, marker in enumerate(binding_markers)}
+    rows: list[tuple[int, ...]] = []
+    for row in values_expression.expressions:
+        if not isinstance(row, exp.Tuple) or any(
+            value for name, value in row.args.items() if name != "expressions"
+        ):
+            return None
+        binding_row: list[int] = []
+        for value_expression in row.expressions:
+            if not isinstance(value_expression, exp.Placeholder):
+                return None
+            marker = _placeholder_name(value_expression)
+            if marker is None or marker not in binding_indexes:
+                return None
+            binding_row.append(binding_indexes[marker])
+        rows.append(tuple(binding_row))
+
+    return tuple(rows) if rows else None
+
+
+def _source_uses_insert_values_syntax(
+    sql: str,
+    *,
+    source_dialect: str,
+) -> bool:
+    """Require an actual top-level source VALUES token after the root INSERT."""
+
+    depth = 0
+    root_insert_seen = False
+    for token in tokenize_preparation_sql(sql, dialect=source_dialect):
+        if token.token_type is TokenType.L_PAREN:
+            depth += 1
+            continue
+        if token.token_type is TokenType.R_PAREN:
+            depth = max(0, depth - 1)
+            continue
+        if depth != 0:
+            continue
+        if not root_insert_seen:
+            root_insert_seen = token.token_type is TokenType.INSERT
+            continue
+        if token.token_type is TokenType.VALUES:
+            return True
+    return False
 
 
 def _make_placeholders_anonymous(

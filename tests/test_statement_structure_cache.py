@@ -87,6 +87,29 @@ class StatementStructureCacheTests(unittest.TestCase):
         self.assertEqual(second["where_fields"], ["people.id"])
         self.assertEqual(second["analysis"]["hardcoded_value_count"], 0)
 
+    def test_cached_insert_analysis_returns_fresh_nested_containers(self) -> None:
+        sql = "INSERT INTO people (lookup_code, payload) VALUES (?, ?)"
+        first = prepared(sql, bindings=["A", 1])
+        first_analysis = first["analysis"]["insert"]
+        self.assertIsNotNone(first_analysis)
+        assert first_analysis is not None
+        first_analysis["target"]["table"] = "broken"
+        first_analysis["supplied_columns"].append("invented")
+
+        second = prepared(sql, bindings=["B", 2])
+
+        self.assertEqual(
+            second["analysis"]["insert"],
+            {
+                "target": {
+                    "catalog": None,
+                    "schema": None,
+                    "table": "people",
+                },
+                "supplied_columns": ["lookup_code", "payload"],
+            },
+        )
+
     def test_normalized_dialects_share_one_structure(self) -> None:
         sql = "SELECT * FROM people WHERE id = ?"
         prepared(

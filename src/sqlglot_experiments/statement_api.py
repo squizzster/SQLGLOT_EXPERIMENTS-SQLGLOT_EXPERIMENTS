@@ -55,9 +55,21 @@ _GENERIC_FINGERPRINT_ALGORITHM = (
 )
 
 
+class InsertTarget(TypedDict):
+    catalog: str | None
+    schema: str | None
+    table: str
+
+
+class InsertAnalysis(TypedDict):
+    target: InsertTarget
+    supplied_columns: list[str]
+
+
 class Analysis(TypedDict):
     hardcoded_value_count: int
     hardcoded_field_count: int
+    insert: InsertAnalysis | None
 
 
 class PreparedStatement(ApiSuccessEnvelope):
@@ -118,6 +130,20 @@ class _PreparedStructure:
     where_fields: tuple[WhereField, ...]
     hardcoded_value_count: int
     hardcoded_field_count: int
+    insert_analysis: _InsertAnalysis | None
+
+
+@dataclass(frozen=True)
+class _InsertTarget:
+    catalog: str | None
+    schema: str | None
+    table: str
+
+
+@dataclass(frozen=True)
+class _InsertAnalysis:
+    target: _InsertTarget
+    supplied_columns: tuple[str, ...]
 
 
 _DIRECT_PREDICATES = (
@@ -506,6 +532,10 @@ def _build_statement_structure(
         source_dialect=target_dialect,
         target_dialect=target_dialect,
     )
+    insert_analysis = _extract_insert_analysis(
+        target_ast,
+        statement_type=target_statement_type,
+    )
     sql_fingerprint = fingerprint_statement(
         sql,
         source_dialect=source_dialect,
@@ -530,6 +560,7 @@ def _build_statement_structure(
         where_fields=tuple(where_fields),
         hardcoded_value_count=hardcoded_value_count,
         hardcoded_field_count=len(field_keys),
+        insert_analysis=insert_analysis,
     )
 
 
@@ -595,7 +626,63 @@ def _materialize_prepared_statement(
         "analysis": {
             "hardcoded_value_count": structure.hardcoded_value_count,
             "hardcoded_field_count": structure.hardcoded_field_count,
+            "insert": _materialize_insert_analysis(structure.insert_analysis),
         },
+    }
+
+
+def _extract_insert_analysis(
+    statement: exp.Expr,
+    *,
+    statement_type: StatementType,
+) -> _InsertAnalysis | None:
+    """Extract only target-owned facts proven by one prepared INSERT AST."""
+
+    if statement_type != "INSERT" or not isinstance(statement, exp.Insert):
+        return None
+
+    target_expression = statement.this
+    if isinstance(target_expression, exp.Schema):
+        table_expression = target_expression.this
+        column_expressions = target_expression.expressions
+    else:
+        table_expression = target_expression
+        column_expressions = []
+
+    if not isinstance(table_expression, exp.Table) or not table_expression.name:
+        return None
+    if not column_expressions:
+        target_alias = table_expression.args.get("alias")
+        if isinstance(target_alias, exp.TableAlias):
+            column_expressions = target_alias.columns
+    if any(
+        not isinstance(column, exp.Identifier) or not column.name
+        for column in column_expressions
+    ):
+        return None
+
+    return _InsertAnalysis(
+        target=_InsertTarget(
+            catalog=table_expression.catalog or None,
+            schema=table_expression.db or None,
+            table=table_expression.name,
+        ),
+        supplied_columns=tuple(column.name for column in column_expressions),
+    )
+
+
+def _materialize_insert_analysis(
+    analysis: _InsertAnalysis | None,
+) -> InsertAnalysis | None:
+    if analysis is None:
+        return None
+    return {
+        "target": {
+            "catalog": analysis.target.catalog,
+            "schema": analysis.target.schema,
+            "table": analysis.target.table,
+        },
+        "supplied_columns": list(analysis.supplied_columns),
     }
 
 

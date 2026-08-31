@@ -44,6 +44,7 @@ class ExtendedStatementApiTests(unittest.TestCase):
                 "analysis": {
                     "hardcoded_value_count": 2,
                     "hardcoded_field_count": 2,
+                    "insert": None,
                 },
             },
         )
@@ -77,6 +78,7 @@ class ExtendedStatementApiTests(unittest.TestCase):
                 "analysis": {
                     "hardcoded_value_count": 2,
                     "hardcoded_field_count": 2,
+                    "insert": None,
                 },
             },
         )

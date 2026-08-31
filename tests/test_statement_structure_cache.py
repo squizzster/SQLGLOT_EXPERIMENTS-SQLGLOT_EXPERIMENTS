@@ -115,6 +115,37 @@ class StatementStructureCacheTests(unittest.TestCase):
             },
         )
 
+    def test_cached_mutation_analysis_returns_fresh_nested_containers(self) -> None:
+        sql = "UPDATE people SET active = ? WHERE id = ?"
+        first = prepared(sql, bindings=[False, 1])
+        first_analysis = first["analysis"]["existing_row_mutations"]
+        first_analysis["evidence_complete"] = False
+        first_analysis["effects"][0]["target"]["table"] = "broken"
+        updated_columns = first_analysis["effects"][0]["updated_columns"]
+        self.assertIsNotNone(updated_columns)
+        assert updated_columns is not None
+        updated_columns.append("invented")
+
+        second = prepared(sql, bindings=[True, 2])
+
+        self.assertEqual(
+            second["analysis"]["existing_row_mutations"],
+            {
+                "effects": [
+                    {
+                        "target": {
+                            "catalog": None,
+                            "schema": None,
+                            "table": "people",
+                        },
+                        "updated_columns": ["active"],
+                        "deletes_rows": False,
+                    }
+                ],
+                "evidence_complete": True,
+            },
+        )
+
     def test_normalized_dialects_share_one_structure(self) -> None:
         sql = "SELECT * FROM people WHERE id = ?"
         prepared(

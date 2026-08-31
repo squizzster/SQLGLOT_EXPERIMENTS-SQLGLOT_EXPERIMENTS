@@ -51,6 +51,10 @@ A successful extended replacement returns:
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
         "insert": None,
+        "existing_row_mutations": {
+            "effects": [],
+            "evidence_complete": True,
+        },
     },
 }
 ```
@@ -248,6 +252,42 @@ cannot decide whether a target has an auto-increment identity, whether supplied
 columns cover a unique constraint, or whether a row-value tuple is usable as a
 database identity. Those decisions belong to a schema-owning consumer.
 
+`analysis.existing_row_mutations` is present on every prepared envelope:
+
+```python
+{
+    "effects": [
+        {
+            "target": {
+                "catalog": str | None,
+                "schema": str | None,
+                "table": str,
+            },
+            "updated_columns": list[str] | None,
+            "deletes_rows": bool,
+        },
+    ],
+    "evidence_complete": bool,
+}
+```
+
+It describes possible direct changes to existing rows in the authoritative
+target AST. UPDATE assignment targets, DELETE targets, INSERT conflict-update
+assignments, REPLACE deletion semantics, MERGE actions, and nested
+data-modifying statements are included. Effects for the same physical target
+are combined in deterministic AST order. An empty list proves no such direct
+effect was found. `updated_columns: None` means the exact assignment-target set
+could not be bounded; `evidence_complete: False` means some direct effect could
+not be resolved completely. Consumers enforcing a mutation policy can therefore
+fail closed instead of guessing.
+
+The analysis separates mutation intent from selection intent: fields used only
+in WHERE, JOIN, conflict, or MERGE predicates are not reported as updated
+columns. Qualification remains structured under the same identifier rules as
+`analysis.insert`. This is schema-free AST evidence, not permission to execute
+and not a claim about triggers, cascades, stored routines, or other indirect
+engine-side effects.
+
 Missing caller bindings and incorrectly sized binding sequences return a
 failure envelope. SQLite mappings must contain every required named key;
 unrelated mapping keys are ignored. A successful return therefore always
@@ -296,7 +336,8 @@ The immutable cache key consists of the normalized source dialect, normalized
 target dialect, exact input SQL, and ordered source binding names. Anonymous
 slots receive structural names such as `#1`. Caller binding values never enter
 the cache key or cached structure. A cached entry retains the generated SQL,
-fingerprint, statement type, WHERE fields, analysis, status, and binding route.
+fingerprint, statement type, WHERE fields, both analysis reports, status, and
+binding route.
 Each call resolves that route against its current binding values and returns a
 fresh envelope with fresh mutable containers.
 

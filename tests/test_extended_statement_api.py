@@ -45,6 +45,20 @@ class ExtendedStatementApiTests(unittest.TestCase):
                     "hardcoded_value_count": 2,
                     "hardcoded_field_count": 2,
                     "insert": None,
+                    "existing_row_mutations": {
+                        "effects": [
+                            {
+                                "target": {
+                                    "catalog": None,
+                                    "schema": None,
+                                    "table": "people",
+                                },
+                                "updated_columns": [],
+                                "deletes_rows": True,
+                            }
+                        ],
+                        "evidence_complete": True,
+                    },
                 },
             },
         )
@@ -79,6 +93,20 @@ class ExtendedStatementApiTests(unittest.TestCase):
                     "hardcoded_value_count": 2,
                     "hardcoded_field_count": 2,
                     "insert": None,
+                    "existing_row_mutations": {
+                        "effects": [
+                            {
+                                "target": {
+                                    "catalog": None,
+                                    "schema": None,
+                                    "table": "people",
+                                },
+                                "updated_columns": ["name"],
+                                "deletes_rows": False,
+                            }
+                        ],
+                        "evidence_complete": True,
+                    },
                 },
             },
         )

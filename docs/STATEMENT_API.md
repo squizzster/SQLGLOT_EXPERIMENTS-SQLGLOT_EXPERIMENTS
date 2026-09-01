@@ -50,7 +50,12 @@ A successful extended replacement returns:
     "analysis": {
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
+        "returns_rows": True,
         "insert": None,
+        "direct_writes": {
+            "targets": [],
+            "evidence_complete": True,
+        },
         "existing_row_mutations": {
             "effects": [],
             "evidence_complete": True,
@@ -184,9 +189,10 @@ physical source, and for a simple `UPDATE` or `DELETE` when there is exactly one
 physical DML source. The three fixed forms are:
 
 ```python
-"id"                  # physical table unknown
-"people.id"           # physical table proven; database unknown
-"main.people.id"      # database and physical table proven
+"id"  # physical table unknown
+
+"people.id"  # physical table proven; database unknown
+"main.people.id"  # database and physical table proven
 ```
 
 Ambiguous joins, potentially correlated unqualified fields, and derived/CTE
@@ -209,6 +215,12 @@ counts are the machine-readable warning that Brick 1 replaced hardcoded values;
 both remain `0` for already-parameterized input. An `INSERT` without a column
 list can still lift its values, but its field count is `0` because the SQL does
 not name the fields.
+
+`analysis.returns_rows` is a boolean derived from the authoritative target AST.
+It is true for queries and for prepared writes with an explicit result projection
+such as `RETURNING`. It is false for writes without one, even if a native driver
+would expose incidental result metadata. The field reports statement intent; it
+does not execute SQL or predict how many rows an engine will return.
 
 `analysis.insert` is present on every prepared envelope. For `SELECT`, `UPDATE`,
 `DELETE`, `MERGE`, and `REPLACE` it is `None`. A prepared INSERT returns:
@@ -251,6 +263,16 @@ single-row operation. This library does not connect to a database and therefore
 cannot decide whether a target has an auto-increment identity, whether supplied
 columns cover a unique constraint, or whether a row-value tuple is usable as a
 database identity. Those decisions belong to a schema-owning consumer.
+
+`analysis.direct_writes` is present on every prepared envelope. Its ordered
+`targets` list contains each direct AST-visible write recipient exactly once,
+including plain INSERT, INSERT-only MERGE, and nested data-modifying CTE targets.
+Each target keeps catalog, schema, and table components separate.
+`evidence_complete: False` means the full direct target set was not resolved.
+This completeness is independent from assignment-column completeness, so a
+structured single-table UPDATE target can be complete while its assignment
+effect is unresolved. The field is schema-free and does not inspect triggers,
+cascades, or routines.
 
 `analysis.existing_row_mutations` is present on every prepared envelope:
 

@@ -57,11 +57,21 @@ an execution-readiness claim. It is `None` for non-INSERT prepared families and 
 structured target, supplied-column, and optional direct binding-row report for
 INSERT. It does not alter warning or failure state.
 
+The prepared envelope's `analysis.direct_writes` member reports the ordered,
+structured relation targets that receive direct AST-visible writes and whether
+that target evidence is complete. It includes INSERT-only MERGE and nested write
+targets without making database-schema or indirect-effect claims. Target
+completeness is independent from assignment-column completeness.
+
 The prepared envelope's `analysis.existing_row_mutations` member is also
 fixed-shape AST evidence. It reports direct target-AST-visible update columns and
 row-deletion effects, plus whether that evidence is complete. It does not apply
 schema policy, inspect a database, or claim knowledge of indirect trigger,
 cascade, or stored-routine behavior.
+
+The prepared envelope's `analysis.returns_rows` member states whether the
+authoritative target AST is a query or carries an explicit write-result
+projection. It does not depend on native cursor metadata.
 
 SQLGlot-accepted statements outside the extended `SELECT`, `INSERT`, `UPDATE`,
 `DELETE`, `MERGE`, and `REPLACE` route return the normal three-field success

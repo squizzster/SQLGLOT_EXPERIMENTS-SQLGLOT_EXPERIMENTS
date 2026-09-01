@@ -78,10 +78,17 @@ class ExistingRowMutationAnalysis(TypedDict):
     evidence_complete: bool
 
 
+class DirectWriteAnalysis(TypedDict):
+    targets: list[StatementTarget]
+    evidence_complete: bool
+
+
 class Analysis(TypedDict):
     hardcoded_value_count: int
     hardcoded_field_count: int
+    returns_rows: bool
     insert: InsertAnalysis | None
+    direct_writes: DirectWriteAnalysis
     existing_row_mutations: ExistingRowMutationAnalysis
 
 
@@ -143,7 +150,9 @@ class _PreparedStructure:
     where_fields: tuple[WhereField, ...]
     hardcoded_value_count: int
     hardcoded_field_count: int
+    returns_rows: bool
     insert_analysis: _InsertAnalysis | None
+    direct_write_analysis: _DirectWriteAnalysis
     existing_row_mutation_analysis: _ExistingRowMutationAnalysis
 
 
@@ -171,6 +180,12 @@ class _ExistingRowMutationEffect:
 @dataclass(frozen=True)
 class _ExistingRowMutationAnalysis:
     effects: tuple[_ExistingRowMutationEffect, ...]
+    evidence_complete: bool
+
+
+@dataclass(frozen=True)
+class _DirectWriteAnalysis:
+    targets: tuple[_StatementTarget, ...]
     evidence_complete: bool
 
 
@@ -569,6 +584,7 @@ def _build_statement_structure(
         plain_values_binding_rows=plain_values_binding_rows,
     )
     existing_row_mutation_analysis = _extract_existing_row_mutation_analysis(target_ast)
+    direct_write_analysis = _extract_direct_write_analysis(target_ast)
     sql_fingerprint = fingerprint_statement(
         sql,
         source_dialect=source_dialect,
@@ -593,7 +609,11 @@ def _build_statement_structure(
         where_fields=tuple(where_fields),
         hardcoded_value_count=hardcoded_value_count,
         hardcoded_field_count=len(field_keys),
+        returns_rows=(
+            isinstance(target_ast, exp.Query) or bool(target_ast.args.get("returning"))
+        ),
         insert_analysis=insert_analysis,
+        direct_write_analysis=direct_write_analysis,
         existing_row_mutation_analysis=existing_row_mutation_analysis,
     )
 
@@ -658,7 +678,11 @@ def _materialize_prepared_statement(
         "analysis": {
             "hardcoded_value_count": structure.hardcoded_value_count,
             "hardcoded_field_count": structure.hardcoded_field_count,
+            "returns_rows": structure.returns_rows,
             "insert": _materialize_insert_analysis(structure.insert_analysis),
+            "direct_writes": _materialize_direct_write_analysis(
+                structure.direct_write_analysis
+            ),
             "existing_row_mutations": _materialize_existing_row_mutation_analysis(
                 structure.existing_row_mutation_analysis
             ),
@@ -757,6 +781,50 @@ def _extract_existing_row_mutation_analysis(
 
     return _ExistingRowMutationAnalysis(
         effects=_merge_existing_row_effects_by_target(raw_effects),
+        evidence_complete=evidence_complete,
+    )
+
+
+def _extract_direct_write_analysis(
+    statement: exp.Expr,
+) -> _DirectWriteAnalysis:
+    """Extract every direct AST-visible relation receiving a write."""
+
+    targets: list[_StatementTarget] = []
+    evidence_complete = True
+    for node in statement.walk():
+        node_targets: tuple[_StatementTarget, ...] = ()
+        node_complete = True
+        if isinstance(node, exp.Update) and not _is_merge_action(node):
+            effects, effect_complete = _standalone_update_effects(node)
+            node_targets = tuple(dict.fromkeys(effect.target for effect in effects))
+            # A single structured UPDATE relation stays authoritative even when
+            # the assignment-column shape is outside policy analysis. With
+            # several candidates, incomplete assignment evidence cannot prove
+            # which relations are actually written.
+            node_complete = bool(node_targets) and (
+                effect_complete or len(node_targets) == 1
+            )
+        elif isinstance(node, exp.Delete) and not _is_merge_action(node):
+            effects, node_complete = _standalone_delete_effects(node)
+            node_targets = tuple(dict.fromkeys(effect.target for effect in effects))
+            node_complete = node_complete and bool(node_targets)
+        elif isinstance(node, exp.Insert) and not _is_merge_action(node):
+            target = _statement_target(_insert_target_table(node))
+            node_targets = (target,) if target is not None else ()
+            node_complete = target is not None
+        elif isinstance(node, exp.Merge):
+            target = _statement_target(node.this)
+            node_targets = (target,) if target is not None else ()
+            node_complete = target is not None
+        else:
+            continue
+        evidence_complete = evidence_complete and node_complete
+        for target in node_targets:
+            if target not in targets:
+                targets.append(target)
+    return _DirectWriteAnalysis(
+        targets=tuple(targets),
         evidence_complete=evidence_complete,
     )
 
@@ -1075,6 +1143,22 @@ def _materialize_existing_row_mutation_analysis(
                 "deletes_rows": effect.deletes_rows,
             }
             for effect in analysis.effects
+        ],
+        "evidence_complete": analysis.evidence_complete,
+    }
+
+
+def _materialize_direct_write_analysis(
+    analysis: _DirectWriteAnalysis,
+) -> DirectWriteAnalysis:
+    return {
+        "targets": [
+            {
+                "catalog": target.catalog,
+                "schema": target.schema,
+                "table": target.table,
+            }
+            for target in analysis.targets
         ],
         "evidence_complete": analysis.evidence_complete,
     }

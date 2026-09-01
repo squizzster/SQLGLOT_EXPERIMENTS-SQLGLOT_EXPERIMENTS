@@ -114,7 +114,9 @@ receives a write, including plain INSERT targets, INSERT-only MERGE targets, and
 writes nested beneath an outer query. Catalog, schema, and table components stay
 separate. `evidence_complete: False` tells an execution consumer that the full
 target set was not resolved; the field does not inspect a database or infer
-trigger, cascade, or stored-routine effects.
+trigger, cascade, or stored-routine effects. Direct-target completeness is
+independent from assignment-column completeness: a structured single-table
+UPDATE target can remain complete when its assignment shape is unresolved.
 
 `analysis.existing_row_mutations` reports direct, target-AST-visible effects on
 existing rows across UPDATE, DELETE, INSERT conflict updates, REPLACE, MERGE,

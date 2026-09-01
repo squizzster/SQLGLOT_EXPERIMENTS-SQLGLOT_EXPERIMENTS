@@ -169,6 +169,185 @@ class DirectWriteAnalysisTests(unittest.TestCase):
                     },
                 )
 
+    def test_twenty_assignment_unknown_cases_keep_structured_write_targets(
+        self,
+    ) -> None:
+        """Assignment-policy uncertainty cannot contaminate target evidence."""
+
+        cases = (
+            (
+                "postgres",
+                "UPDATE ordinary_rows SET payload[1] = 7 WHERE id = 1",
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                "UPDATE ordinary_rows SET payload[2] = payload[1] WHERE id = 1",
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                "UPDATE ordinary_rows SET payload[1:2] = ARRAY[7, 8] WHERE id = 1",
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                "UPDATE ordinary_rows SET matrix[1][2] = 9 WHERE id = 1",
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                "UPDATE ordinary_rows SET payload[-1] = 7 WHERE id = 1",
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                "UPDATE ordinary_rows SET payload[:2] = ARRAY[7, 8] WHERE id = 1",
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                'UPDATE ordinary_rows SET "payload"[1] = 7 WHERE id = 1',
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                "UPDATE ordinary_rows AS o SET payload[1] = 7 WHERE o.id = 1",
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                "UPDATE app.ordinary_rows SET payload[1] = 7 WHERE id = 1",
+                [target("ordinary_rows", schema="app")],
+            ),
+            (
+                "postgres",
+                'UPDATE "odd.schema"."ordinary.rows" SET payload[1] = 7 WHERE id = 1',
+                [target("ordinary.rows", schema="odd.schema")],
+            ),
+            (
+                "postgres",
+                (
+                    "WITH changed AS ("
+                    "UPDATE ordinary_rows SET payload[1] = 7 RETURNING id"
+                    ") SELECT id FROM changed"
+                ),
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                (
+                    "WITH changed AS ("
+                    "UPDATE ordinary_rows SET payload[1] = 7 RETURNING id"
+                    ") INSERT INTO audit_rows SELECT id FROM changed"
+                ),
+                [target("audit_rows"), target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                (
+                    "UPDATE ordinary_rows "
+                    "SET payload[1] = 7, note = 'changed' WHERE id = 1"
+                ),
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                (
+                    "UPDATE ordinary_rows SET payload[1] = 7 FROM source_rows "
+                    "WHERE source_rows.id = ordinary_rows.id"
+                ),
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                (
+                    "INSERT INTO ordinary_rows (id, payload) VALUES (1, ARRAY[1]) "
+                    "ON CONFLICT (id) DO UPDATE SET payload[1] = 7"
+                ),
+                [target("ordinary_rows")],
+            ),
+            (
+                "postgres",
+                (
+                    "MERGE INTO ordinary_rows AS o USING incoming AS i ON o.id = i.id "
+                    "WHEN MATCHED THEN UPDATE SET payload[1] = 7"
+                ),
+                [target("ordinary_rows")],
+            ),
+            (
+                "duckdb",
+                "UPDATE ordinary_rows SET payload.x = 7 WHERE id = 1",
+                [target("ordinary_rows")],
+            ),
+            (
+                "duckdb",
+                "UPDATE ordinary_rows AS o SET payload.x = 7 WHERE o.id = 1",
+                [target("ordinary_rows")],
+            ),
+            (
+                "duckdb",
+                (
+                    "WITH changed AS ("
+                    "UPDATE ordinary_rows SET payload.x = 7 RETURNING id"
+                    ") SELECT id FROM changed"
+                ),
+                [target("ordinary_rows")],
+            ),
+            (
+                "mysql",
+                "UPDATE ordinary_rows SET payload.x = 7 WHERE id = 1",
+                [target("ordinary_rows")],
+            ),
+        )
+
+        self.assertEqual(len(cases), 20)
+        for dialect, statement, expected_targets in cases:
+            with self.subTest(dialect=dialect, statement=statement):
+                analysis = prepared(statement, dialect=dialect)["analysis"]
+                self.assertFalse(
+                    analysis["existing_row_mutations"]["evidence_complete"]
+                )
+                self.assertEqual(
+                    analysis["direct_writes"],
+                    {
+                        "targets": expected_targets,
+                        "evidence_complete": True,
+                    },
+                )
+
+    def test_mysql_multi_target_update_keeps_ambiguity_bounded(self) -> None:
+        cases = (
+            (
+                "UPDATE people p JOIN extra e ON e.id = p.id SET mystery.active = 0",
+                [target("people"), target("extra")],
+                False,
+            ),
+            (
+                "UPDATE people p JOIN extra e ON e.id = p.id SET p.active = 0",
+                [target("people")],
+                True,
+            ),
+            (
+                (
+                    "UPDATE people p JOIN extra e ON e.id = p.id "
+                    "SET p.active = 0, e.value = 1"
+                ),
+                [target("people"), target("extra")],
+                True,
+            ),
+        )
+
+        for statement, expected_targets, expected_complete in cases:
+            with self.subTest(statement=statement):
+                self.assertEqual(
+                    prepared(statement, dialect="mysql")["analysis"]["direct_writes"],
+                    {
+                        "targets": expected_targets,
+                        "evidence_complete": expected_complete,
+                    },
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

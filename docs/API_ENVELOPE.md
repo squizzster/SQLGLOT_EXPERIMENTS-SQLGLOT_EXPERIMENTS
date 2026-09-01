@@ -60,7 +60,8 @@ INSERT. It does not alter warning or failure state.
 The prepared envelope's `analysis.direct_writes` member reports the ordered,
 structured relation targets that receive direct AST-visible writes and whether
 that target evidence is complete. It includes INSERT-only MERGE and nested write
-targets without making database-schema or indirect-effect claims.
+targets without making database-schema or indirect-effect claims. Target
+completeness is independent from assignment-column completeness.
 
 The prepared envelope's `analysis.existing_row_mutations` member is also
 fixed-shape AST evidence. It reports direct target-AST-visible update columns and

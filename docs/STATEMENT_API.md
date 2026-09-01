@@ -269,7 +269,10 @@ database identity. Those decisions belong to a schema-owning consumer.
 including plain INSERT, INSERT-only MERGE, and nested data-modifying CTE targets.
 Each target keeps catalog, schema, and table components separate.
 `evidence_complete: False` means the full direct target set was not resolved.
-The field is schema-free and does not inspect triggers, cascades, or routines.
+This completeness is independent from assignment-column completeness, so a
+structured single-table UPDATE target can be complete while its assignment
+effect is unresolved. The field is schema-free and does not inspect triggers,
+cascades, or routines.
 
 `analysis.existing_row_mutations` is present on every prepared envelope:
 

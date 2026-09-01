@@ -57,6 +57,12 @@ an execution-readiness claim. It is `None` for non-INSERT prepared families and 
 structured target, supplied-column, and optional direct binding-row report for
 INSERT. It does not alter warning or failure state.
 
+The prepared envelope's `analysis.existing_row_mutations` member is also
+fixed-shape AST evidence. It reports direct target-AST-visible update columns and
+row-deletion effects, plus whether that evidence is complete. It does not apply
+schema policy, inspect a database, or claim knowledge of indirect trigger,
+cascade, or stored-routine behavior.
+
 SQLGlot-accepted statements outside the extended `SELECT`, `INSERT`, `UPDATE`,
 `DELETE`, `MERGE`, and `REPLACE` route return the normal three-field success
 envelope plus only a `sql_fingerprint`. This is syntactic source acceptance,

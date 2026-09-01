@@ -38,6 +38,7 @@ from sqlglot_experiments.statement_classification import (
     StatementClassificationError,
     StatementType,
     extended_statement_type,
+    is_replace_statement,
     require_extended_statement_type,
     statement_semantic_signature,
 )
@@ -54,22 +55,34 @@ _DEFAULT_LRU_CACHE_SIZE = 128
 _GENERIC_FINGERPRINT_ALGORITHM = "sqlglot-experiments/generic-source-fingerprint/v1"
 
 
-class InsertTarget(TypedDict):
+class StatementTarget(TypedDict):
     catalog: str | None
     schema: str | None
     table: str
 
 
 class InsertAnalysis(TypedDict):
-    target: InsertTarget
+    target: StatementTarget
     supplied_columns: list[str]
     plain_values_binding_rows: list[list[int]] | None
+
+
+class ExistingRowMutationEffect(TypedDict):
+    target: StatementTarget
+    updated_columns: list[str] | None
+    deletes_rows: bool
+
+
+class ExistingRowMutationAnalysis(TypedDict):
+    effects: list[ExistingRowMutationEffect]
+    evidence_complete: bool
 
 
 class Analysis(TypedDict):
     hardcoded_value_count: int
     hardcoded_field_count: int
     insert: InsertAnalysis | None
+    existing_row_mutations: ExistingRowMutationAnalysis
 
 
 class PreparedStatement(ApiSuccessEnvelope):
@@ -131,10 +144,11 @@ class _PreparedStructure:
     hardcoded_value_count: int
     hardcoded_field_count: int
     insert_analysis: _InsertAnalysis | None
+    existing_row_mutation_analysis: _ExistingRowMutationAnalysis
 
 
 @dataclass(frozen=True)
-class _InsertTarget:
+class _StatementTarget:
     catalog: str | None
     schema: str | None
     table: str
@@ -142,9 +156,22 @@ class _InsertTarget:
 
 @dataclass(frozen=True)
 class _InsertAnalysis:
-    target: _InsertTarget
+    target: _StatementTarget
     supplied_columns: tuple[str, ...]
     plain_values_binding_rows: tuple[tuple[int, ...], ...] | None
+
+
+@dataclass(frozen=True)
+class _ExistingRowMutationEffect:
+    target: _StatementTarget
+    updated_columns: tuple[str, ...] | None
+    deletes_rows: bool
+
+
+@dataclass(frozen=True)
+class _ExistingRowMutationAnalysis:
+    effects: tuple[_ExistingRowMutationEffect, ...]
+    evidence_complete: bool
 
 
 _DIRECT_PREDICATES = (
@@ -541,6 +568,7 @@ def _build_statement_structure(
         statement_type=target_statement_type,
         plain_values_binding_rows=plain_values_binding_rows,
     )
+    existing_row_mutation_analysis = _extract_existing_row_mutation_analysis(target_ast)
     sql_fingerprint = fingerprint_statement(
         sql,
         source_dialect=source_dialect,
@@ -566,6 +594,7 @@ def _build_statement_structure(
         hardcoded_value_count=hardcoded_value_count,
         hardcoded_field_count=len(field_keys),
         insert_analysis=insert_analysis,
+        existing_row_mutation_analysis=existing_row_mutation_analysis,
     )
 
 
@@ -630,6 +659,9 @@ def _materialize_prepared_statement(
             "hardcoded_value_count": structure.hardcoded_value_count,
             "hardcoded_field_count": structure.hardcoded_field_count,
             "insert": _materialize_insert_analysis(structure.insert_analysis),
+            "existing_row_mutations": _materialize_existing_row_mutation_analysis(
+                structure.existing_row_mutation_analysis
+            ),
         },
     }
 
@@ -666,7 +698,7 @@ def _extract_insert_analysis(
         return None
 
     return _InsertAnalysis(
-        target=_InsertTarget(
+        target=_StatementTarget(
             catalog=table_expression.catalog or None,
             schema=table_expression.db or None,
             table=table_expression.name,
@@ -693,6 +725,358 @@ def _materialize_insert_analysis(
             if analysis.plain_values_binding_rows is not None
             else None
         ),
+    }
+
+
+def _extract_existing_row_mutation_analysis(
+    statement: exp.Expr,
+) -> _ExistingRowMutationAnalysis:
+    """Extract every direct AST-visible UPDATE, DELETE, or replacement effect."""
+
+    raw_effects: list[_ExistingRowMutationEffect] = []
+    evidence_complete = True
+    for node in statement.walk():
+        if isinstance(node, exp.Update):
+            if _is_merge_action(node):
+                continue
+            effects, complete = _standalone_update_effects(node)
+        elif isinstance(node, exp.Delete):
+            if _is_merge_action(node):
+                continue
+            effects, complete = _standalone_delete_effects(node)
+        elif isinstance(node, exp.Merge):
+            effects, complete = _merge_existing_row_effects(node)
+        elif isinstance(node, exp.Insert):
+            if _is_merge_action(node):
+                continue
+            effects, complete = _insert_existing_row_effects(node)
+        else:
+            continue
+        raw_effects.extend(effects)
+        evidence_complete = evidence_complete and complete
+
+    return _ExistingRowMutationAnalysis(
+        effects=_merge_existing_row_effects_by_target(raw_effects),
+        evidence_complete=evidence_complete,
+    )
+
+
+def _standalone_update_effects(
+    statement: exp.Update,
+) -> tuple[tuple[_ExistingRowMutationEffect, ...], bool]:
+    base_table, targets_by_name = _update_target_tables(statement)
+    if base_table is None:
+        return (), False
+
+    candidate_targets = tuple(dict.fromkeys(targets_by_name.values()))
+    columns_by_target: dict[_StatementTarget, list[str] | None] = {}
+    expressions = statement.args.get("expressions")
+    if not isinstance(expressions, list) or not expressions:
+        return (
+            tuple(
+                _ExistingRowMutationEffect(target, None, False)
+                for target in candidate_targets
+            ),
+            False,
+        )
+
+    evidence_complete = True
+    for expression in expressions:
+        if not isinstance(expression, exp.EQ):
+            evidence_complete = False
+            for target in candidate_targets:
+                columns_by_target[target] = None
+            continue
+        columns = _assignment_target_columns(expression.this)
+        if columns is None:
+            evidence_complete = False
+            for target in candidate_targets:
+                columns_by_target[target] = None
+            continue
+        for column in columns:
+            target = (
+                targets_by_name.get(column.table)
+                if column.table
+                else _statement_target(base_table)
+            )
+            if target is None:
+                evidence_complete = False
+                for candidate in candidate_targets:
+                    columns_by_target[candidate] = None
+                continue
+            _append_updated_column(columns_by_target, target, column.name)
+
+    return (
+        tuple(
+            _ExistingRowMutationEffect(
+                target=target,
+                updated_columns=(tuple(columns) if columns is not None else None),
+                deletes_rows=False,
+            )
+            for target, columns in columns_by_target.items()
+        ),
+        evidence_complete,
+    )
+
+
+def _standalone_delete_effects(
+    statement: exp.Delete,
+) -> tuple[tuple[_ExistingRowMutationEffect, ...], bool]:
+    base_table, targets_by_name = _delete_target_tables(statement)
+    if base_table is None:
+        return (), False
+
+    raw_targets = statement.args.get("tables")
+    if not isinstance(raw_targets, list) or not raw_targets:
+        target = _statement_target(base_table)
+        if target is None:
+            return (), False
+        return (_ExistingRowMutationEffect(target, (), True),), True
+
+    effects: list[_ExistingRowMutationEffect] = []
+    evidence_complete = True
+    for raw_target in raw_targets:
+        target: _StatementTarget | None = None
+        if isinstance(raw_target, exp.Table):
+            target = targets_by_name.get(raw_target.name)
+            if target is None:
+                target = _statement_target(raw_target)
+        if target is None:
+            evidence_complete = False
+            continue
+        effects.append(_ExistingRowMutationEffect(target, (), True))
+    return tuple(effects), evidence_complete
+
+
+def _insert_existing_row_effects(
+    statement: exp.Insert,
+) -> tuple[tuple[_ExistingRowMutationEffect, ...], bool]:
+    deletes_rows = is_replace_statement(statement) or bool(
+        statement.args.get("overwrite")
+    )
+    updated_columns: tuple[str, ...] | None = ()
+    conflict = statement.args.get("conflict")
+    if isinstance(conflict, exp.OnConflict):
+        action = conflict.args.get("action")
+        action_name = action.name.upper() if isinstance(action, exp.Var) else ""
+        if "UPDATE" in action_name:
+            updated_columns = _assignment_column_names(conflict.args.get("expressions"))
+        elif action_name not in {"", "DO NOTHING", "NOTHING"}:
+            return (), False
+
+    if not deletes_rows and updated_columns == ():
+        return (), True
+    target_table = _insert_target_table(statement)
+    target = _statement_target(target_table)
+    if target is None:
+        return (), False
+    return (
+        _ExistingRowMutationEffect(
+            target=target,
+            updated_columns=updated_columns,
+            deletes_rows=deletes_rows,
+        ),
+    ), updated_columns is not None
+
+
+def _merge_existing_row_effects(
+    statement: exp.Merge,
+) -> tuple[tuple[_ExistingRowMutationEffect, ...], bool]:
+    updated_columns: list[str] | None = []
+    deletes_rows = False
+    evidence_complete = True
+    whens = statement.args.get("whens")
+    if not isinstance(whens, exp.Whens):
+        return (), False
+
+    for when in whens.expressions:
+        if not isinstance(when, exp.When):
+            evidence_complete = False
+            continue
+        action = when.args.get("then")
+        if isinstance(action, exp.Update):
+            action_columns = _assignment_column_names(action.args.get("expressions"))
+            if action_columns is None:
+                updated_columns = None
+                evidence_complete = False
+            elif updated_columns is not None:
+                updated_columns.extend(action_columns)
+        elif isinstance(action, exp.Delete) or (
+            isinstance(action, exp.Var) and action.name.upper() == "DELETE"
+        ):
+            deletes_rows = True
+
+    if not deletes_rows and updated_columns == []:
+        return (), evidence_complete
+    target = _statement_target(statement.this)
+    if target is None:
+        return (), False
+    return (
+        _ExistingRowMutationEffect(
+            target=target,
+            updated_columns=(
+                tuple(updated_columns) if updated_columns is not None else None
+            ),
+            deletes_rows=deletes_rows,
+        ),
+    ), evidence_complete
+
+
+def _update_target_tables(
+    statement: exp.Update,
+) -> tuple[exp.Table | None, dict[str, _StatementTarget]]:
+    target = statement.this
+    if not isinstance(target, exp.Table):
+        return None, {}
+    return target, _direct_table_targets(target)
+
+
+def _delete_target_tables(
+    statement: exp.Delete,
+) -> tuple[exp.Table | None, dict[str, _StatementTarget]]:
+    target = statement.this
+    if not isinstance(target, exp.Table):
+        return None, {}
+    return target, _direct_table_targets(target)
+
+
+def _direct_table_targets(base_table: exp.Table) -> dict[str, _StatementTarget]:
+    tables = [base_table]
+    joins = base_table.args.get("joins")
+    if isinstance(joins, list):
+        tables.extend(
+            join.this
+            for join in joins
+            if isinstance(join, exp.Join) and isinstance(join.this, exp.Table)
+        )
+
+    targets: dict[str, _StatementTarget] = {}
+    for table in tables:
+        target = _statement_target(table)
+        if target is None:
+            continue
+        targets.setdefault(table.name, target)
+        if table.alias_or_name:
+            targets.setdefault(table.alias_or_name, target)
+    return targets
+
+
+def _insert_target_table(statement: exp.Insert) -> exp.Table | None:
+    target = statement.this
+    if isinstance(target, exp.Schema):
+        target = target.this
+    return target if isinstance(target, exp.Table) else None
+
+
+def _statement_target(expression: object) -> _StatementTarget | None:
+    if not isinstance(expression, exp.Table) or not expression.name:
+        return None
+    return _StatementTarget(
+        catalog=expression.catalog or None,
+        schema=expression.db or None,
+        table=expression.name,
+    )
+
+
+def _assignment_target_columns(expression: exp.Expr) -> tuple[exp.Column, ...] | None:
+    if isinstance(expression, exp.Column) and expression.name:
+        return (expression,)
+    if isinstance(expression, exp.Tuple):
+        columns = tuple(expression.expressions)
+        if columns and all(
+            isinstance(column, exp.Column) and column.name for column in columns
+        ):
+            return cast(tuple[exp.Column, ...], columns)
+    return None
+
+
+def _assignment_column_names(expressions: object) -> tuple[str, ...] | None:
+    if not isinstance(expressions, list) or not expressions:
+        return None
+    columns: list[str] = []
+    for expression in expressions:
+        if not isinstance(expression, exp.EQ):
+            return None
+        targets = _assignment_target_columns(expression.this)
+        if targets is None:
+            return None
+        columns.extend(column.name for column in targets)
+    return tuple(columns)
+
+
+def _append_updated_column(
+    columns_by_target: dict[_StatementTarget, list[str] | None],
+    target: _StatementTarget,
+    column_name: str,
+) -> None:
+    columns = columns_by_target.setdefault(target, [])
+    if columns is not None:
+        columns.append(column_name)
+
+
+def _is_merge_action(statement: exp.Expr) -> bool:
+    return isinstance(statement.parent, exp.When) and isinstance(
+        statement.parent.find_ancestor(exp.Merge), exp.Merge
+    )
+
+
+def _merge_existing_row_effects_by_target(
+    effects: list[_ExistingRowMutationEffect],
+) -> tuple[_ExistingRowMutationEffect, ...]:
+    target_order: list[_StatementTarget] = []
+    columns_by_target: dict[_StatementTarget, list[str] | None] = {}
+    deletes_by_target: dict[_StatementTarget, bool] = {}
+
+    for effect in effects:
+        if effect.target not in columns_by_target:
+            target_order.append(effect.target)
+            columns_by_target[effect.target] = []
+            deletes_by_target[effect.target] = False
+        target_columns = columns_by_target[effect.target]
+        if effect.updated_columns is None:
+            columns_by_target[effect.target] = None
+        elif target_columns is not None:
+            target_columns.extend(effect.updated_columns)
+        deletes_by_target[effect.target] = (
+            deletes_by_target[effect.target] or effect.deletes_rows
+        )
+
+    merged: list[_ExistingRowMutationEffect] = []
+    for target in target_order:
+        target_columns = columns_by_target[target]
+        merged.append(
+            _ExistingRowMutationEffect(
+                target=target,
+                updated_columns=(
+                    tuple(target_columns) if target_columns is not None else None
+                ),
+                deletes_rows=deletes_by_target[target],
+            )
+        )
+    return tuple(merged)
+
+
+def _materialize_existing_row_mutation_analysis(
+    analysis: _ExistingRowMutationAnalysis,
+) -> ExistingRowMutationAnalysis:
+    return {
+        "effects": [
+            {
+                "target": {
+                    "catalog": effect.target.catalog,
+                    "schema": effect.target.schema,
+                    "table": effect.target.table,
+                },
+                "updated_columns": (
+                    list(effect.updated_columns)
+                    if effect.updated_columns is not None
+                    else None
+                ),
+                "deletes_rows": effect.deletes_rows,
+            }
+            for effect in analysis.effects
+        ],
+        "evidence_complete": analysis.evidence_complete,
     }
 
 

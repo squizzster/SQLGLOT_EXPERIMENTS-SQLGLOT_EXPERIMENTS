@@ -89,6 +89,10 @@ class StatementApiTests(unittest.TestCase):
                     "hardcoded_value_count": 1,
                     "hardcoded_field_count": 1,
                     "insert": None,
+                    "existing_row_mutations": {
+                        "effects": [],
+                        "evidence_complete": True,
+                    },
                 },
             },
         )
@@ -142,6 +146,10 @@ class StatementApiTests(unittest.TestCase):
                     },
                     "supplied_columns": [],
                     "plain_values_binding_rows": [[0, 1, 2]],
+                },
+                "existing_row_mutations": {
+                    "effects": [],
+                    "evidence_complete": True,
                 },
             },
         )
@@ -208,6 +216,10 @@ class StatementApiTests(unittest.TestCase):
                 "hardcoded_value_count": 2,
                 "hardcoded_field_count": 1,
                 "insert": None,
+                "existing_row_mutations": {
+                    "effects": [],
+                    "evidence_complete": True,
+                },
             },
         )
 
@@ -246,6 +258,10 @@ class StatementApiTests(unittest.TestCase):
                 "hardcoded_value_count": 0,
                 "hardcoded_field_count": 0,
                 "insert": None,
+                "existing_row_mutations": {
+                    "effects": [],
+                    "evidence_complete": True,
+                },
             },
         )
 
@@ -274,6 +290,10 @@ class StatementApiTests(unittest.TestCase):
                     "hardcoded_value_count": 0,
                     "hardcoded_field_count": 0,
                     "insert": None,
+                    "existing_row_mutations": {
+                        "effects": [],
+                        "evidence_complete": True,
+                    },
                 },
             },
         )
@@ -497,6 +517,10 @@ class StatementApiTests(unittest.TestCase):
                 "hardcoded_value_count": 1,
                 "hardcoded_field_count": 1,
                 "insert": None,
+                "existing_row_mutations": {
+                    "effects": [],
+                    "evidence_complete": True,
+                },
             },
         )
 

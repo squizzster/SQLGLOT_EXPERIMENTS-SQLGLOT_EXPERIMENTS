@@ -38,6 +38,10 @@ A successful hardcoded-value replacement returns:
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
         "insert": None,
+        "existing_row_mutations": {
+            "effects": [],
+            "evidence_complete": True,
+        },
     },
 }
 ```
@@ -94,6 +98,15 @@ identifier content, qualification is not flattened, duplicates remain visible,
 and an absent column list stays empty. The library does not inspect database
 schema or claim auto-increment/unique eligibility; its consumer combines these
 static SQL facts with its own schema evidence.
+
+`analysis.existing_row_mutations` reports direct, target-AST-visible effects on
+existing rows across UPDATE, DELETE, INSERT conflict updates, REPLACE, MERGE,
+and nested data-modifying statements. Each effect keeps its catalog, schema,
+and table structured, lists assignment-target columns, and states whether rows
+may be deleted. `evidence_complete: False` tells a schema-owning consumer that
+the exact direct effect could not be resolved safely. WHERE fields are not
+assignment targets. Triggers, cascades, stored routines, and other engine-side
+indirect effects remain outside this schema-free AST contract.
 
 Prepared SQL structures use a built-in LRU with a default limit of 128 entries
 per Python process. Consumers may replace that limit with

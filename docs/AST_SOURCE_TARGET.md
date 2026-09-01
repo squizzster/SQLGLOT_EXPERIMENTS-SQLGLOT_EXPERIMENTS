@@ -30,6 +30,8 @@ Rules:
 - Reparse generated SQL as target dialect before returning it.
 - Require the target AST to retain the source operation and extended-statement
   semantic signature.
+- Derive execution-facing INSERT and direct existing-row mutation evidence from
+  that authoritative target AST, including nested data-modifying statements.
 - Transform a copy; retain the source AST.
 - Never reuse a target-prepared AST for a different target.
 - SQLGlot parsing or generation is not target-engine validation.

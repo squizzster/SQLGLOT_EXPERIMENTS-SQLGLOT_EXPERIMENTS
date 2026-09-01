@@ -88,6 +88,7 @@ class StatementApiTests(unittest.TestCase):
                 "analysis": {
                     "hardcoded_value_count": 1,
                     "hardcoded_field_count": 1,
+                    "returns_rows": True,
                     "insert": None,
                     "existing_row_mutations": {
                         "effects": [],
@@ -138,6 +139,7 @@ class StatementApiTests(unittest.TestCase):
             {
                 "hardcoded_value_count": 3,
                 "hardcoded_field_count": 0,
+                "returns_rows": False,
                 "insert": {
                     "target": {
                         "catalog": None,
@@ -215,6 +217,7 @@ class StatementApiTests(unittest.TestCase):
             {
                 "hardcoded_value_count": 2,
                 "hardcoded_field_count": 1,
+                "returns_rows": True,
                 "insert": None,
                 "existing_row_mutations": {
                     "effects": [],
@@ -257,6 +260,7 @@ class StatementApiTests(unittest.TestCase):
             {
                 "hardcoded_value_count": 0,
                 "hardcoded_field_count": 0,
+                "returns_rows": True,
                 "insert": None,
                 "existing_row_mutations": {
                     "effects": [],
@@ -289,6 +293,7 @@ class StatementApiTests(unittest.TestCase):
                 "analysis": {
                     "hardcoded_value_count": 0,
                     "hardcoded_field_count": 0,
+                    "returns_rows": True,
                     "insert": None,
                     "existing_row_mutations": {
                         "effects": [],
@@ -516,6 +521,7 @@ class StatementApiTests(unittest.TestCase):
             {
                 "hardcoded_value_count": 1,
                 "hardcoded_field_count": 1,
+                "returns_rows": True,
                 "insert": None,
                 "existing_row_mutations": {
                     "effects": [],

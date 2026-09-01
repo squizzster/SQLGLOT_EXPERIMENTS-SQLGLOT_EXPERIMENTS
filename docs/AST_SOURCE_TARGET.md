@@ -32,6 +32,8 @@ Rules:
   semantic signature.
 - Derive execution-facing INSERT and direct existing-row mutation evidence from
   that authoritative target AST, including nested data-modifying statements.
+- Derive result-row intent from that same target AST; never infer it from SQL
+  substrings or future driver cursor metadata.
 - Transform a copy; retain the source AST.
 - Never reuse a target-prepared AST for a different target.
 - SQLGlot parsing or generation is not target-engine validation.

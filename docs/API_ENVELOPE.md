@@ -63,6 +63,10 @@ row-deletion effects, plus whether that evidence is complete. It does not apply
 schema policy, inspect a database, or claim knowledge of indirect trigger,
 cascade, or stored-routine behavior.
 
+The prepared envelope's `analysis.returns_rows` member states whether the
+authoritative target AST is a query or carries an explicit write-result
+projection. It does not depend on native cursor metadata.
+
 SQLGlot-accepted statements outside the extended `SELECT`, `INSERT`, `UPDATE`,
 `DELETE`, `MERGE`, and `REPLACE` route return the normal three-field success
 envelope plus only a `sql_fingerprint`. This is syntactic source acceptance,

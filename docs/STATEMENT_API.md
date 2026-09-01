@@ -50,6 +50,7 @@ A successful extended replacement returns:
     "analysis": {
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
+        "returns_rows": True,
         "insert": None,
         "existing_row_mutations": {
             "effects": [],
@@ -209,6 +210,12 @@ counts are the machine-readable warning that Brick 1 replaced hardcoded values;
 both remain `0` for already-parameterized input. An `INSERT` without a column
 list can still lift its values, but its field count is `0` because the SQL does
 not name the fields.
+
+`analysis.returns_rows` is a boolean derived from the authoritative target AST.
+It is true for queries and for prepared writes with an explicit result projection
+such as `RETURNING`. It is false for writes without one, even if a native driver
+would expose incidental result metadata. The field reports statement intent; it
+does not execute SQL or predict how many rows an engine will return.
 
 `analysis.insert` is present on every prepared envelope. For `SELECT`, `UPDATE`,
 `DELETE`, `MERGE`, and `REPLACE` it is `None`. A prepared INSERT returns:

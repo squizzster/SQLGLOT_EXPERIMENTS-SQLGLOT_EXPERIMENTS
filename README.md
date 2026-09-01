@@ -37,6 +37,7 @@ A successful hardcoded-value replacement returns:
     "analysis": {
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
+        "returns_rows": True,
         "insert": None,
         "existing_row_mutations": {
             "effects": [],
@@ -98,6 +99,11 @@ identifier content, qualification is not flattened, duplicates remain visible,
 and an absent column list stays empty. The library does not inspect database
 schema or claim auto-increment/unique eligibility; its consumer combines these
 static SQL facts with its own schema evidence.
+
+`analysis.returns_rows` is authoritative target-AST evidence. It is `True` for
+queries and for write statements with an explicit result projection such as
+`RETURNING`; it is `False` for writes without one. Consumers use this fact to
+distinguish authored row results from incidental driver metadata.
 
 `analysis.existing_row_mutations` reports direct, target-AST-visible effects on
 existing rows across UPDATE, DELETE, INSERT conflict updates, REPLACE, MERGE,

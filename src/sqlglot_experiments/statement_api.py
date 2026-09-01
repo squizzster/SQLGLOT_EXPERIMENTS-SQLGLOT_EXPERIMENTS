@@ -81,6 +81,7 @@ class ExistingRowMutationAnalysis(TypedDict):
 class Analysis(TypedDict):
     hardcoded_value_count: int
     hardcoded_field_count: int
+    returns_rows: bool
     insert: InsertAnalysis | None
     existing_row_mutations: ExistingRowMutationAnalysis
 
@@ -143,6 +144,7 @@ class _PreparedStructure:
     where_fields: tuple[WhereField, ...]
     hardcoded_value_count: int
     hardcoded_field_count: int
+    returns_rows: bool
     insert_analysis: _InsertAnalysis | None
     existing_row_mutation_analysis: _ExistingRowMutationAnalysis
 
@@ -593,6 +595,10 @@ def _build_statement_structure(
         where_fields=tuple(where_fields),
         hardcoded_value_count=hardcoded_value_count,
         hardcoded_field_count=len(field_keys),
+        returns_rows=(
+            isinstance(target_ast, exp.Query)
+            or bool(target_ast.args.get("returning"))
+        ),
         insert_analysis=insert_analysis,
         existing_row_mutation_analysis=existing_row_mutation_analysis,
     )
@@ -658,6 +664,7 @@ def _materialize_prepared_statement(
         "analysis": {
             "hardcoded_value_count": structure.hardcoded_value_count,
             "hardcoded_field_count": structure.hardcoded_field_count,
+            "returns_rows": structure.returns_rows,
             "insert": _materialize_insert_analysis(structure.insert_analysis),
             "existing_row_mutations": _materialize_existing_row_mutation_analysis(
                 structure.existing_row_mutation_analysis

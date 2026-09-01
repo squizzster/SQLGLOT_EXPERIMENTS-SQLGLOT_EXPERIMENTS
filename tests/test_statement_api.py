@@ -89,6 +89,7 @@ class StatementApiTests(unittest.TestCase):
                     "hardcoded_value_count": 1,
                     "hardcoded_field_count": 1,
                     "returns_rows": True,
+                    "contains_unresolved_function_calls": False,
                     "insert": None,
                     "existing_row_mutations": {
                         "effects": [],
@@ -140,6 +141,7 @@ class StatementApiTests(unittest.TestCase):
                 "hardcoded_value_count": 3,
                 "hardcoded_field_count": 0,
                 "returns_rows": False,
+                "contains_unresolved_function_calls": False,
                 "insert": {
                     "target": {
                         "catalog": None,
@@ -218,6 +220,7 @@ class StatementApiTests(unittest.TestCase):
                 "hardcoded_value_count": 2,
                 "hardcoded_field_count": 1,
                 "returns_rows": True,
+                "contains_unresolved_function_calls": False,
                 "insert": None,
                 "existing_row_mutations": {
                     "effects": [],
@@ -261,6 +264,7 @@ class StatementApiTests(unittest.TestCase):
                 "hardcoded_value_count": 0,
                 "hardcoded_field_count": 0,
                 "returns_rows": True,
+                "contains_unresolved_function_calls": False,
                 "insert": None,
                 "existing_row_mutations": {
                     "effects": [],
@@ -294,6 +298,7 @@ class StatementApiTests(unittest.TestCase):
                     "hardcoded_value_count": 0,
                     "hardcoded_field_count": 0,
                     "returns_rows": True,
+                    "contains_unresolved_function_calls": False,
                     "insert": None,
                     "existing_row_mutations": {
                         "effects": [],
@@ -522,6 +527,7 @@ class StatementApiTests(unittest.TestCase):
                 "hardcoded_value_count": 1,
                 "hardcoded_field_count": 1,
                 "returns_rows": True,
+                "contains_unresolved_function_calls": False,
                 "insert": None,
                 "existing_row_mutations": {
                     "effects": [],

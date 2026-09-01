@@ -51,6 +51,7 @@ A successful extended replacement returns:
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
         "returns_rows": True,
+        "contains_unresolved_function_calls": False,
         "insert": None,
         "existing_row_mutations": {
             "effects": [],
@@ -216,6 +217,14 @@ It is true for queries and for prepared writes with an explicit result projectio
 such as `RETURNING`. It is false for writes without one, even if a native driver
 would expose incidental result metadata. The field reports statement intent; it
 does not execute SQL or predict how many rows an engine will return.
+
+`analysis.contains_unresolved_function_calls` is true when the authoritative
+target AST contains a dialect-specific anonymous function call that SQLGlot did
+not classify as a known function node. It is conservative schema-free evidence
+for an execution consumer: the field neither proves that a routine exists nor
+predicts its effects. MySQL's legacy `VALUES(column)` conflict-update form is
+excluded because it is syntax owned by the containing INSERT, not an unresolved
+stored-function call.
 
 `analysis.insert` is present on every prepared envelope. For `SELECT`, `UPDATE`,
 `DELETE`, `MERGE`, and `REPLACE` it is `None`. A prepared INSERT returns:

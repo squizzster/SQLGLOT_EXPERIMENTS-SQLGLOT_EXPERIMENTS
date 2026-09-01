@@ -38,6 +38,7 @@ A successful hardcoded-value replacement returns:
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
         "returns_rows": True,
+        "contains_unresolved_function_calls": False,
         "insert": None,
         "existing_row_mutations": {
             "effects": [],
@@ -104,6 +105,14 @@ static SQL facts with its own schema evidence.
 queries and for write statements with an explicit result projection such as
 `RETURNING`; it is `False` for writes without one. Consumers use this fact to
 distinguish authored row results from incidental driver metadata.
+
+`analysis.contains_unresolved_function_calls` is conservative target-AST
+evidence that at least one function call remains an anonymous, dialect-specific
+call rather than a SQLGlot-recognized function node. A schema-owning execution
+consumer can use it to reject calls whose indirect database effects it cannot
+prove. It does not claim that the call exists on a server or that it has side
+effects. MySQL's legacy `VALUES(column)` conflict-update form is the one
+explicit safe anonymous-call exception.
 
 `analysis.existing_row_mutations` reports direct, target-AST-visible effects on
 existing rows across UPDATE, DELETE, INSERT conflict updates, REPLACE, MERGE,

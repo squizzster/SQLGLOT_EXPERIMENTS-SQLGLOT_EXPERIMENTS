@@ -45,6 +45,7 @@ class ExtendedStatementApiTests(unittest.TestCase):
                     "hardcoded_value_count": 2,
                     "hardcoded_field_count": 2,
                     "returns_rows": False,
+                    "contains_unresolved_function_calls": False,
                     "insert": None,
                     "existing_row_mutations": {
                         "effects": [
@@ -94,6 +95,7 @@ class ExtendedStatementApiTests(unittest.TestCase):
                     "hardcoded_value_count": 2,
                     "hardcoded_field_count": 2,
                     "returns_rows": False,
+                    "contains_unresolved_function_calls": False,
                     "insert": None,
                     "existing_row_mutations": {
                         "effects": [
@@ -550,16 +552,11 @@ class ExtendedStatementApiTests(unittest.TestCase):
             ),
             (
                 "mysql",
-                (
-                    "REPLACE INTO people (id) VALUES (1) "
-                    "ON DUPLICATE KEY UPDATE id = 2"
-                ),
+                ("REPLACE INTO people (id) VALUES (1) ON DUPLICATE KEY UPDATE id = 2"),
             ),
             (
                 "postgres",
-                (
-                    "MERGE INTO people p USING incoming i ON p.id = i.id"
-                ),
+                ("MERGE INTO people p USING incoming i ON p.id = i.id"),
             ),
             (
                 "postgres",
@@ -746,7 +743,7 @@ class SqliteReplaceExecutionTests(unittest.TestCase):
         connection.executescript(
             'CREATE TABLE src ("set" INTEGER);'
             'CREATE TABLE dst ("set" INTEGER PRIMARY KEY);'
-            'INSERT INTO src VALUES (7);'
+            "INSERT INTO src VALUES (7);"
         )
         package = require_prepared(
             prepare_statement(
@@ -798,7 +795,9 @@ class DuckDbExtendedExecutionTests(unittest.TestCase):
 
         def connection_with_data() -> Any:
             connection = self.duckdb.connect(":memory:")
-            connection.execute("CREATE TABLE people (id INTEGER PRIMARY KEY, name VARCHAR)")
+            connection.execute(
+                "CREATE TABLE people (id INTEGER PRIMARY KEY, name VARCHAR)"
+            )
             connection.execute("CREATE TABLE incoming (id INTEGER, name VARCHAR)")
             connection.execute("INSERT INTO people VALUES (1, 'Old')")
             connection.execute("INSERT INTO incoming VALUES (1, 'Source'), (2, 'New')")

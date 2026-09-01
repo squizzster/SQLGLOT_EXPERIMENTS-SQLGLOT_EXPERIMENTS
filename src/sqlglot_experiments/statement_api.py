@@ -82,6 +82,7 @@ class Analysis(TypedDict):
     hardcoded_value_count: int
     hardcoded_field_count: int
     returns_rows: bool
+    contains_unresolved_function_calls: bool
     insert: InsertAnalysis | None
     existing_row_mutations: ExistingRowMutationAnalysis
 
@@ -145,6 +146,7 @@ class _PreparedStructure:
     hardcoded_value_count: int
     hardcoded_field_count: int
     returns_rows: bool
+    contains_unresolved_function_calls: bool
     insert_analysis: _InsertAnalysis | None
     existing_row_mutation_analysis: _ExistingRowMutationAnalysis
 
@@ -596,11 +598,27 @@ def _build_statement_structure(
         hardcoded_value_count=hardcoded_value_count,
         hardcoded_field_count=len(field_keys),
         returns_rows=(
-            isinstance(target_ast, exp.Query)
-            or bool(target_ast.args.get("returning"))
+            isinstance(target_ast, exp.Query) or bool(target_ast.args.get("returning"))
+        ),
+        contains_unresolved_function_calls=_contains_unresolved_function_calls(
+            target_ast,
+            target_dialect=target_dialect,
         ),
         insert_analysis=insert_analysis,
         existing_row_mutation_analysis=existing_row_mutation_analysis,
+    )
+
+
+def _contains_unresolved_function_calls(
+    statement: exp.Expr,
+    *,
+    target_dialect: str,
+) -> bool:
+    safe_anonymous_names = {"VALUES"} if target_dialect == "mysql" else set()
+    return any(
+        isinstance(node, exp.Anonymous)
+        and node.name.upper() not in safe_anonymous_names
+        for node in statement.walk()
     )
 
 
@@ -665,6 +683,9 @@ def _materialize_prepared_statement(
             "hardcoded_value_count": structure.hardcoded_value_count,
             "hardcoded_field_count": structure.hardcoded_field_count,
             "returns_rows": structure.returns_rows,
+            "contains_unresolved_function_calls": (
+                structure.contains_unresolved_function_calls
+            ),
             "insert": _materialize_insert_analysis(structure.insert_analysis),
             "existing_row_mutations": _materialize_existing_row_mutation_analysis(
                 structure.existing_row_mutation_analysis

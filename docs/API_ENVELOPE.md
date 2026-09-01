@@ -67,6 +67,12 @@ The prepared envelope's `analysis.returns_rows` member states whether the
 authoritative target AST is a query or carries an explicit write-result
 projection. It does not depend on native cursor metadata.
 
+The prepared envelope's `analysis.contains_unresolved_function_calls` member is
+conservative target-AST evidence for dialect-specific anonymous calls. It does
+not inspect server routines or claim that a call has side effects; it lets a
+schema-owning execution consumer fail closed when indirect effects cannot be
+proved safe.
+
 SQLGlot-accepted statements outside the extended `SELECT`, `INSERT`, `UPDATE`,
 `DELETE`, `MERGE`, and `REPLACE` route return the normal three-field success
 envelope plus only a `sql_fingerprint`. This is syntactic source acceptance,

@@ -119,8 +119,11 @@ class StatementStructureCacheTests(unittest.TestCase):
         sql = "UPDATE people SET active = ? WHERE id = ?"
         first = prepared(sql, bindings=[False, 1])
         first_analysis = first["analysis"]["existing_row_mutations"]
+        first_direct_writes = first["analysis"]["direct_writes"]
         first_analysis["evidence_complete"] = False
         first_analysis["effects"][0]["target"]["table"] = "broken"
+        first_direct_writes["evidence_complete"] = False
+        first_direct_writes["targets"][0]["table"] = "broken"
         updated_columns = first_analysis["effects"][0]["updated_columns"]
         self.assertIsNotNone(updated_columns)
         assert updated_columns is not None
@@ -142,6 +145,13 @@ class StatementStructureCacheTests(unittest.TestCase):
                         "deletes_rows": False,
                     }
                 ],
+                "evidence_complete": True,
+            },
+        )
+        self.assertEqual(
+            second["analysis"]["direct_writes"],
+            {
+                "targets": [{"catalog": None, "schema": None, "table": "people"}],
                 "evidence_complete": True,
             },
         )

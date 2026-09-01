@@ -45,8 +45,13 @@ class ExtendedStatementApiTests(unittest.TestCase):
                     "hardcoded_value_count": 2,
                     "hardcoded_field_count": 2,
                     "returns_rows": False,
-                    "contains_unresolved_function_calls": False,
                     "insert": None,
+                    "direct_writes": {
+                        "targets": [
+                            {"catalog": None, "schema": None, "table": "people"}
+                        ],
+                        "evidence_complete": True,
+                    },
                     "existing_row_mutations": {
                         "effects": [
                             {
@@ -95,8 +100,13 @@ class ExtendedStatementApiTests(unittest.TestCase):
                     "hardcoded_value_count": 2,
                     "hardcoded_field_count": 2,
                     "returns_rows": False,
-                    "contains_unresolved_function_calls": False,
                     "insert": None,
+                    "direct_writes": {
+                        "targets": [
+                            {"catalog": None, "schema": None, "table": "people"}
+                        ],
+                        "evidence_complete": True,
+                    },
                     "existing_row_mutations": {
                         "effects": [
                             {

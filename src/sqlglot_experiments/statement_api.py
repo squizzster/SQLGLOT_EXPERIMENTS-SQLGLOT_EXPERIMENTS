@@ -78,12 +78,17 @@ class ExistingRowMutationAnalysis(TypedDict):
     evidence_complete: bool
 
 
+class DirectWriteAnalysis(TypedDict):
+    targets: list[StatementTarget]
+    evidence_complete: bool
+
+
 class Analysis(TypedDict):
     hardcoded_value_count: int
     hardcoded_field_count: int
     returns_rows: bool
-    contains_unresolved_function_calls: bool
     insert: InsertAnalysis | None
+    direct_writes: DirectWriteAnalysis
     existing_row_mutations: ExistingRowMutationAnalysis
 
 
@@ -146,8 +151,8 @@ class _PreparedStructure:
     hardcoded_value_count: int
     hardcoded_field_count: int
     returns_rows: bool
-    contains_unresolved_function_calls: bool
     insert_analysis: _InsertAnalysis | None
+    direct_write_analysis: _DirectWriteAnalysis
     existing_row_mutation_analysis: _ExistingRowMutationAnalysis
 
 
@@ -175,6 +180,12 @@ class _ExistingRowMutationEffect:
 @dataclass(frozen=True)
 class _ExistingRowMutationAnalysis:
     effects: tuple[_ExistingRowMutationEffect, ...]
+    evidence_complete: bool
+
+
+@dataclass(frozen=True)
+class _DirectWriteAnalysis:
+    targets: tuple[_StatementTarget, ...]
     evidence_complete: bool
 
 
@@ -573,6 +584,10 @@ def _build_statement_structure(
         plain_values_binding_rows=plain_values_binding_rows,
     )
     existing_row_mutation_analysis = _extract_existing_row_mutation_analysis(target_ast)
+    direct_write_analysis = _extract_direct_write_analysis(
+        target_ast,
+        existing_row_mutation_analysis=existing_row_mutation_analysis,
+    )
     sql_fingerprint = fingerprint_statement(
         sql,
         source_dialect=source_dialect,
@@ -600,25 +615,9 @@ def _build_statement_structure(
         returns_rows=(
             isinstance(target_ast, exp.Query) or bool(target_ast.args.get("returning"))
         ),
-        contains_unresolved_function_calls=_contains_unresolved_function_calls(
-            target_ast,
-            target_dialect=target_dialect,
-        ),
         insert_analysis=insert_analysis,
+        direct_write_analysis=direct_write_analysis,
         existing_row_mutation_analysis=existing_row_mutation_analysis,
-    )
-
-
-def _contains_unresolved_function_calls(
-    statement: exp.Expr,
-    *,
-    target_dialect: str,
-) -> bool:
-    safe_anonymous_names = {"VALUES"} if target_dialect == "mysql" else set()
-    return any(
-        isinstance(node, exp.Anonymous)
-        and node.name.upper() not in safe_anonymous_names
-        for node in statement.walk()
     )
 
 
@@ -683,10 +682,10 @@ def _materialize_prepared_statement(
             "hardcoded_value_count": structure.hardcoded_value_count,
             "hardcoded_field_count": structure.hardcoded_field_count,
             "returns_rows": structure.returns_rows,
-            "contains_unresolved_function_calls": (
-                structure.contains_unresolved_function_calls
-            ),
             "insert": _materialize_insert_analysis(structure.insert_analysis),
+            "direct_writes": _materialize_direct_write_analysis(
+                structure.direct_write_analysis
+            ),
             "existing_row_mutations": _materialize_existing_row_mutation_analysis(
                 structure.existing_row_mutation_analysis
             ),
@@ -785,6 +784,33 @@ def _extract_existing_row_mutation_analysis(
 
     return _ExistingRowMutationAnalysis(
         effects=_merge_existing_row_effects_by_target(raw_effects),
+        evidence_complete=evidence_complete,
+    )
+
+
+def _extract_direct_write_analysis(
+    statement: exp.Expr,
+    *,
+    existing_row_mutation_analysis: _ExistingRowMutationAnalysis,
+) -> _DirectWriteAnalysis:
+    """Extract every direct AST-visible relation receiving a write."""
+
+    targets = [effect.target for effect in existing_row_mutation_analysis.effects]
+    evidence_complete = existing_row_mutation_analysis.evidence_complete
+    for node in statement.walk():
+        target: _StatementTarget | None = None
+        if isinstance(node, exp.Insert) and not _is_merge_action(node):
+            target = _statement_target(_insert_target_table(node))
+        elif isinstance(node, exp.Merge):
+            target = _statement_target(node.this)
+        else:
+            continue
+        if target is None:
+            evidence_complete = False
+        elif target not in targets:
+            targets.append(target)
+    return _DirectWriteAnalysis(
+        targets=tuple(targets),
         evidence_complete=evidence_complete,
     )
 
@@ -1103,6 +1129,22 @@ def _materialize_existing_row_mutation_analysis(
                 "deletes_rows": effect.deletes_rows,
             }
             for effect in analysis.effects
+        ],
+        "evidence_complete": analysis.evidence_complete,
+    }
+
+
+def _materialize_direct_write_analysis(
+    analysis: _DirectWriteAnalysis,
+) -> DirectWriteAnalysis:
+    return {
+        "targets": [
+            {
+                "catalog": target.catalog,
+                "schema": target.schema,
+                "table": target.table,
+            }
+            for target in analysis.targets
         ],
         "evidence_complete": analysis.evidence_complete,
     }

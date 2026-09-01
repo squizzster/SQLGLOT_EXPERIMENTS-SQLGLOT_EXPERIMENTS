@@ -38,8 +38,11 @@ A successful hardcoded-value replacement returns:
         "hardcoded_value_count": 1,
         "hardcoded_field_count": 1,
         "returns_rows": True,
-        "contains_unresolved_function_calls": False,
         "insert": None,
+        "direct_writes": {
+            "targets": [],
+            "evidence_complete": True,
+        },
         "existing_row_mutations": {
             "effects": [],
             "evidence_complete": True,
@@ -106,13 +109,12 @@ queries and for write statements with an explicit result projection such as
 `RETURNING`; it is `False` for writes without one. Consumers use this fact to
 distinguish authored row results from incidental driver metadata.
 
-`analysis.contains_unresolved_function_calls` is conservative target-AST
-evidence that at least one function call remains an anonymous, dialect-specific
-call rather than a SQLGlot-recognized function node. A schema-owning execution
-consumer can use it to reject calls whose indirect database effects it cannot
-prove. It does not claim that the call exists on a server or that it has side
-effects. MySQL's legacy `VALUES(column)` conflict-update form is the one
-explicit safe anonymous-call exception.
+`analysis.direct_writes` reports every direct target-AST-visible relation that
+receives a write, including plain INSERT targets, INSERT-only MERGE targets, and
+writes nested beneath an outer query. Catalog, schema, and table components stay
+separate. `evidence_complete: False` tells an execution consumer that the full
+target set was not resolved; the field does not inspect a database or infer
+trigger, cascade, or stored-routine effects.
 
 `analysis.existing_row_mutations` reports direct, target-AST-visible effects on
 existing rows across UPDATE, DELETE, INSERT conflict updates, REPLACE, MERGE,
